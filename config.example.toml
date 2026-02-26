@@ -1,0 +1,22 @@
+[hotkey]
+key = "right_cmd"
+
+[audio]
+sample_rate = 16000
+channels = 1
+dtype = "float32"
+max_record_seconds = 30
+# input_device = "MacBook Air Microphone"
+
+[model]
+size = "base"
+language = "auto"
+device = "mps"
+
+[output]
+mode = "clipboard_paste"
+paste_shortcut = "cmd+v"
+
+[runtime]
+log_level = "INFO"
+notify_on_error = true
