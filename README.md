@@ -1,243 +1,94 @@
 # moonshine-flow
 
-Push-to-talk transcription daemon for macOS.
-Hold a global hotkey to record, release to transcribe with Moonshine, then paste text into the active app.
+macOS向けの Push-to-talk 文字起こしデーモンです。  
+グローバルホットキーを押している間だけ録音し、離したら Moonshine で文字起こししてアクティブアプリへ貼り付けます。
 
-## Features
-- Global key monitoring with low idle CPU usage.
-- Press-and-hold recording in memory.
-- Release-to-transcribe pipeline using [moonshine-ai/moonshine](https://github.com/moonshine-ai/moonshine).
-- Apple Silicon `mps` preference with CPU fallback.
-- Clipboard + `Cmd+V` text injection into the active window.
-- launchd auto-start support.
+## できること
+- グローバルキー監視で録音トリガー
+- Moonshine (`moonshine-voice`) で音声認識
+- クリップボード + `Cmd+V` で結果を貼り付け
+- `launchd` でログイン時自動起動
 
-## Requirements
-- macOS (Apple Silicon / arm64 required for Moonshine transcription)
-- Python 3.11+ and [`uv`](https://docs.astral.sh/uv/) for source installs (`uv sync`)
-- No preinstalled Python needed for Homebrew installs (`brew` installs runtime dependencies)
-
-## Install with Homebrew (tap)
-
-Use this one-liner if you want the easiest path:
+## インストール（Homebrew）
+### 最短（推奨）
 ```bash
 ./scripts/install_brew.sh
 ```
 
-This script:
-- taps this repository,
-- installs stable if available,
-- falls back to `--HEAD` if stable is not published yet,
-- disables Homebrew auto-update during install to reduce unrelated cask/update failures.
-
-### 日本語
-安定版（最初のGitHub Release以降）:
+### 手動
 ```bash
-HOMEBREW_NO_AUTO_UPDATE=1 brew tap madhatternakashima/moonshine-flow https://github.com/MadHatterNakashima/moonshine-flow
 brew install moonshine-flow
 ```
 
-最新版（mainブランチ）:
+最新版（`main`）を入れる場合:
 ```bash
-HOMEBREW_NO_AUTO_UPDATE=1 brew tap madhatternakashima/moonshine-flow https://github.com/MadHatterNakashima/moonshine-flow
-brew install --HEAD moonshine-flow
+brew reinstall --HEAD moonshine-flow
 ```
 
-更新/削除:
+更新・削除:
 ```bash
-HOMEBREW_NO_AUTO_UPDATE=1 brew upgrade moonshine-flow
-HOMEBREW_NO_AUTO_UPDATE=1 brew reinstall --HEAD moonshine-flow
+brew upgrade moonshine-flow
 brew uninstall moonshine-flow
 ```
 
-### Stable install (after first GitHub Release)
+補足:
+- `brew tap` の URL 指定は通常不要です。
+- Homebrew auto-update が原因で失敗する環境では、必要時のみ `HOMEBREW_NO_AUTO_UPDATE=1` を付けてください。
+- ランタイムが壊れた場合は、起動時に `$(brew --prefix)/var/moonshine-flow` 配下を自動修復します。
+
+## 初期セットアップ
 ```bash
-HOMEBREW_NO_AUTO_UPDATE=1 brew tap madhatternakashima/moonshine-flow https://github.com/MadHatterNakashima/moonshine-flow
-brew install moonshine-flow
+moonshine-flow doctor
+moonshine-flow check-permissions --request
+moonshine-flow run
 ```
 
-### HEAD install (latest main branch)
-```bash
-HOMEBREW_NO_AUTO_UPDATE=1 brew tap madhatternakashima/moonshine-flow https://github.com/MadHatterNakashima/moonshine-flow
-brew install --HEAD moonshine-flow
-```
-
-Notes:
-- Stable formula fields (`url`, `sha256`, `version`) are auto-updated when a GitHub Release is published.
-- Before the first Release, use `--HEAD`.
-- Installation runs `uv sync --frozen` during formula install.
-- If the packaged runtime becomes unavailable, the launcher auto-recovers a runtime cache under `$(brew --prefix)/var/moonshine-flow`.
-- Update stable package: `HOMEBREW_NO_AUTO_UPDATE=1 brew upgrade moonshine-flow`
-- Reinstall HEAD package: `HOMEBREW_NO_AUTO_UPDATE=1 brew reinstall --HEAD moonshine-flow`
-- Uninstall: `brew uninstall moonshine-flow`
-- If Homebrew fails with unrelated cask errors during auto-update, retry with `HOMEBREW_NO_AUTO_UPDATE=1`.
-
-## Quick Start (English)
-
-### 1. Install dependencies
-```bash
-uv sync
-```
-
-### 2. Check environment and permissions
-```bash
-uv run moonshine-flow doctor
-uv run moonshine-flow check-permissions
-uv run moonshine-flow check-permissions --request
-```
-
-Important on Apple Silicon:
-- `doctor` should show `Python machine: arm64`.
-- If it shows `x86_64`, your Python is running via Rosetta and Moonshine packages may not install.
-- Switch to an arm64 shell/interpreter before running `uv sync`.
-
-Example fix (pyenv users):
-```bash
-arch -arm64 pyenv install 3.11.11
-arch -arm64 pyenv local 3.11.11
-rm -rf .venv
-arch -arm64 uv sync
-```
-
-Required macOS permissions:
+必要な macOS 権限:
 - Microphone
 - Accessibility
 - Input Monitoring
 
-If permissions are missing, run once with `--request` to trigger system dialogs.
+設定場所: `System Settings -> Privacy & Security`
 
-Enable them in:
-`System Settings -> Privacy & Security`
-
-### 3. Run daemon in foreground
+## launchd 自動起動
 ```bash
-uv run moonshine-flow run
-```
-
-Default hotkey is `right_cmd`.
-
-Flow:
-1. Hold the key: recording starts.
-2. Release the key: recording stops and transcription starts.
-3. Result text is copied to clipboard and pasted into the focused app.
-
-### 4. Install login auto-start (launchd)
-```bash
-./scripts/install_launch_agent.sh
-```
-
-Remove:
-```bash
-./scripts/uninstall_launch_agent.sh
-```
-
-## Configuration
-Default config path:
-`~/.config/moonshine-flow/config.toml`
-
-Example:
-```toml
-[hotkey]
-key = "right_cmd"
-
-[audio]
-sample_rate = 16000
-channels = 1
-dtype = "float32"
-max_record_seconds = 30
-# input_device = "MacBook Air Microphone"  # optional: lock to specific input device
-
-[model]
-size = "base"       # "base" or "tiny"
-language = "auto"   # e.g. "ja", "en", or "auto"
-device = "mps"      # "mps" or "cpu"
-
-[output]
-mode = "clipboard_paste"
-paste_shortcut = "cmd+v"
-
-[runtime]
-log_level = "INFO"
-notify_on_error = true
-```
-
-## Notes
-- If `mps` is unavailable, the app automatically falls back to CPU.
-- Set `audio.input_device` to built-in mic to avoid Bluetooth profile switching during recording.
-- Some secure input fields/apps may block synthetic paste events.
-- If transcription package APIs change upstream, run `uv run moonshine-flow doctor` first and verify package versions.
-- Current dependency set targets Apple Silicon (`arm64`). Running under `x86_64` Python on macOS can prevent Moonshine backend installation.
-
----
-
-## macOS導入手順 (日本語)
-
-### 1. 依存関係をインストール
-```bash
-uv sync
-```
-
-### 2. 動作診断と権限確認
-```bash
-uv run moonshine-flow doctor
-uv run moonshine-flow check-permissions
-uv run moonshine-flow check-permissions --request
-```
-
-Apple Silicon 利用時の注意:
-- `doctor` の `Python machine` が `arm64` になっていることを確認してください。
-- `x86_64` と表示される場合、Rosetta の Python を使っているため Moonshine 依存が入らないことがあります。
-- `uv sync` 前に arm64 のシェル/インタプリタへ切り替えてください。
-
-修正例 (pyenv 利用時):
-```bash
-arch -arm64 pyenv install 3.11.11
-arch -arm64 pyenv local 3.11.11
-rm -rf .venv
-arch -arm64 uv sync
-```
-
-必要な権限:
-- マイク
-- アクセシビリティ
-- 入力監視 (Input Monitoring)
-
-不足している場合は、`--request` を一度実行して許可ダイアログを表示してください。
-
-設定場所:
-`システム設定 -> プライバシーとセキュリティ`
-
-### 3. フォアグラウンドで起動
-```bash
-uv run moonshine-flow run
-```
-
-デフォルトのトリガーキーは `right_cmd` です。
-
-動作フロー:
-1. キーを押している間は録音。
-2. キーを離すと録音停止し、Moonshineで文字起こし。
-3. 結果をクリップボードへ入れ、アクティブウィンドウに貼り付け。
-
-### 4. ログイン時に自動起動 (launchd)
-```bash
-./scripts/install_launch_agent.sh
-```
-
-削除:
-```bash
-./scripts/uninstall_launch_agent.sh
+moonshine-flow install-launch-agent
+moonshine-flow uninstall-launch-agent
 ```
 
 ## 設定ファイル
-デフォルトパス:
-`~/.config/moonshine-flow/config.toml`
+デフォルト: `~/.config/moonshine-flow/config.toml`  
+初回実行時に存在しなければ自動作成されます。
 
-`size` は `base` / `tiny` を設定可能です。
-`language` は `auto` または `ja` などを設定できます。
+主な設定:
+- `hotkey.key`: 録音トリガーキー（既定: `right_cmd`）
+- `model.size`: `base` / `tiny`
+- `model.language`: `auto` / `ja` / `en` など
+- `model.device`: `mps` / `cpu`
 
 ## トラブルシュート
-- `Input Monitoring` 未許可だとグローバルキー監視が動作しません。
-- `Accessibility` 未許可だと貼り付け送信が失敗します。
-- `Microphone` 未許可だと録音開始に失敗します。
-- MPS 非対応時は自動で CPU にフォールバックします。
-- 依存関係は Apple Silicon (`arm64`) を前提にしています。macOS で `x86_64` Python を使うと Moonshine バックエンドを導入できない場合があります。
+- `bad interpreter` が出る: `moonshine-flow --help` を再実行して自己修復を待つ。解消しない場合は `brew reinstall moonshine-flow`。
+- 貼り付けできない: Accessibility 許可を確認。
+- ホットキーが反応しない: Input Monitoring 許可を確認。
+- 録音できない: Microphone 許可を確認。
+
+## 開発参加（最小）
+前提:
+- macOS（Apple Silicon / arm64）
+- Python 3.11
+- `uv`
+
+セットアップ:
+```bash
+uv sync --extra dev
+```
+
+テスト:
+```bash
+uv run pytest
+```
+
+変更時に最低限見るファイル:
+- `src/moonshine_flow/cli.py`（CLI）
+- `src/moonshine_flow/homebrew_bootstrap.py`（Homebrew 起動・自己修復）
+- `Formula/moonshine-flow.rb`（配布定義）
