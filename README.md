@@ -65,6 +65,7 @@ Notes:
 - Stable formula fields (`url`, `sha256`, `version`) are auto-updated when a GitHub Release is published.
 - Before the first Release, use `--HEAD`.
 - Installation runs `uv sync --frozen` during formula install.
+- If the packaged runtime becomes unavailable, the launcher auto-recovers a runtime cache under `$(brew --prefix)/var/moonshine-flow`.
 - Update stable package: `HOMEBREW_NO_AUTO_UPDATE=1 brew upgrade moonshine-flow`
 - Reinstall HEAD package: `HOMEBREW_NO_AUTO_UPDATE=1 brew reinstall --HEAD moonshine-flow`
 - Uninstall: `brew uninstall moonshine-flow`

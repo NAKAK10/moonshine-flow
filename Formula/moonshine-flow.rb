@@ -18,15 +18,22 @@ class MoonshineFlow < Formula
     libexec.install buildpath.children
 
     python = Formula["python@3.11"].opt_bin/"python3.11"
+    uv = Formula["uv"].opt_bin/"uv"
     ENV["UV_PYTHON"] = python
     ENV["UV_PYTHON_DOWNLOADS"] = "never"
-    system "uv", "sync", "--project", libexec, "--frozen"
+    system uv, "sync", "--project", libexec, "--frozen"
 
-    (bin/"moonshine-flow").write_env_script libexec/".venv/bin/moonshine-flow", {
-      "UV_PROJECT" => libexec.to_s,
-      "UV_PYTHON" => python.to_s,
-      "UV_PYTHON_DOWNLOADS" => "never",
-    }
+    (bin/"moonshine-flow").write <<~SH
+      #!/bin/bash
+      exec "#{python}" "#{opt_libexec}/src/moonshine_flow/homebrew_bootstrap.py" \
+        --libexec "#{opt_libexec}" \
+        --var-dir "#{var}/moonshine-flow" \
+        --python "#{python}" \
+        --uv "#{uv}" \
+        -- \
+        "$@"
+    SH
+    chmod 0755, bin/"moonshine-flow"
   end
 
   test do
