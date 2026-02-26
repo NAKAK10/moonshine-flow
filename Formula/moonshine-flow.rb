@@ -5,17 +5,24 @@ class MoonshineFlow < Formula
   # stable-release-start
   # stable-release-end
   head "https://github.com/MadHatterNakashima/moonshine-flow.git", branch: "main"
+  preserve_rpath
 
   depends_on "portaudio"
+  depends_on "python@3.11"
   depends_on "uv"
 
   def install
     libexec.install buildpath.children
 
+    python = Formula["python@3.11"].opt_bin/"python3.11"
+    ENV["UV_PYTHON"] = python
+    ENV["UV_PYTHON_DOWNLOADS"] = "never"
     system "uv", "sync", "--project", libexec, "--frozen"
 
     (bin/"moonshine-flow").write_env_script libexec/".venv/bin/moonshine-flow", {
       "UV_PROJECT" => libexec.to_s,
+      "UV_PYTHON" => python.to_s,
+      "UV_PYTHON_DOWNLOADS" => "never",
     }
   end
 

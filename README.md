@@ -13,8 +13,8 @@ Hold a global hotkey to record, release to transcribe with Moonshine, then paste
 
 ## Requirements
 - macOS (Apple Silicon / arm64 required for Moonshine transcription)
-- Python 3.11+
-- [`uv`](https://docs.astral.sh/uv/)
+- Python 3.11+ and [`uv`](https://docs.astral.sh/uv/) for source installs (`uv sync`)
+- No preinstalled Python needed for Homebrew installs (`brew` installs runtime dependencies)
 
 ## Install with Homebrew (tap)
 
