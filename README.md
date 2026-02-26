@@ -18,35 +18,46 @@ Hold a global hotkey to record, release to transcribe with Moonshine, then paste
 
 ## Install with Homebrew (tap)
 
+Use this one-liner if you want the easiest path:
+```bash
+./scripts/install_brew.sh
+```
+
+This script:
+- taps this repository,
+- installs stable if available,
+- falls back to `--HEAD` if stable is not published yet,
+- disables Homebrew auto-update during install to reduce unrelated cask/update failures.
+
 ### 日本語
 安定版（最初のGitHub Release以降）:
 ```bash
-brew tap MadHatterNakashima/moonshine-flow https://github.com/MadHatterNakashima/moonshine-flow
+HOMEBREW_NO_AUTO_UPDATE=1 brew tap madhatternakashima/moonshine-flow https://github.com/MadHatterNakashima/moonshine-flow
 brew install moonshine-flow
 ```
 
 最新版（mainブランチ）:
 ```bash
-brew tap MadHatterNakashima/moonshine-flow https://github.com/MadHatterNakashima/moonshine-flow
+HOMEBREW_NO_AUTO_UPDATE=1 brew tap madhatternakashima/moonshine-flow https://github.com/MadHatterNakashima/moonshine-flow
 brew install --HEAD moonshine-flow
 ```
 
 更新/削除:
 ```bash
-brew upgrade moonshine-flow
-brew reinstall --HEAD moonshine-flow
+HOMEBREW_NO_AUTO_UPDATE=1 brew upgrade moonshine-flow
+HOMEBREW_NO_AUTO_UPDATE=1 brew reinstall --HEAD moonshine-flow
 brew uninstall moonshine-flow
 ```
 
 ### Stable install (after first GitHub Release)
 ```bash
-brew tap MadHatterNakashima/moonshine-flow https://github.com/MadHatterNakashima/moonshine-flow
+HOMEBREW_NO_AUTO_UPDATE=1 brew tap madhatternakashima/moonshine-flow https://github.com/MadHatterNakashima/moonshine-flow
 brew install moonshine-flow
 ```
 
 ### HEAD install (latest main branch)
 ```bash
-brew tap MadHatterNakashima/moonshine-flow https://github.com/MadHatterNakashima/moonshine-flow
+HOMEBREW_NO_AUTO_UPDATE=1 brew tap madhatternakashima/moonshine-flow https://github.com/MadHatterNakashima/moonshine-flow
 brew install --HEAD moonshine-flow
 ```
 
@@ -54,9 +65,10 @@ Notes:
 - Stable formula fields (`url`, `sha256`, `version`) are auto-updated when a GitHub Release is published.
 - Before the first Release, use `--HEAD`.
 - Installation runs `uv sync --frozen` during formula install.
-- Update stable package: `brew upgrade moonshine-flow`
-- Reinstall HEAD package: `brew reinstall --HEAD moonshine-flow`
+- Update stable package: `HOMEBREW_NO_AUTO_UPDATE=1 brew upgrade moonshine-flow`
+- Reinstall HEAD package: `HOMEBREW_NO_AUTO_UPDATE=1 brew reinstall --HEAD moonshine-flow`
 - Uninstall: `brew uninstall moonshine-flow`
+- If Homebrew fails with unrelated cask errors during auto-update, retry with `HOMEBREW_NO_AUTO_UPDATE=1`.
 
 ## Quick Start (English)
 
