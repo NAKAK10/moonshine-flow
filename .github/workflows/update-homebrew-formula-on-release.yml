@@ -1,0 +1,85 @@
+name: Update Homebrew Formula On Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  update-formula:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compute source tarball checksum
+        id: source
+        env:
+          TAG_NAME: ${{ github.event.release.tag_name }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          url="https://github.com/${REPOSITORY}/archive/refs/tags/${TAG_NAME}.tar.gz"
+          curl -fL "$url" -o source.tar.gz
+          sha256=$(sha256sum source.tar.gz | awk '{print $1}')
+          version="${TAG_NAME#v}"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "sha256=$sha256" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Update Formula/moonshine-flow.rb
+        env:
+          URL: ${{ steps.source.outputs.url }}
+          SHA256: ${{ steps.source.outputs.sha256 }}
+          VERSION: ${{ steps.source.outputs.version }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          path = Path("Formula/moonshine-flow.rb")
+          content = path.read_text(encoding="utf-8")
+
+          start_marker = "  # stable-release-start\n"
+          end_marker = "  # stable-release-end\n"
+          start = content.find(start_marker)
+          end = content.find(end_marker)
+
+          if start == -1 or end == -1 or end < start:
+              raise RuntimeError("Stable release markers not found in Formula/moonshine-flow.rb")
+
+          replacement = (
+              start_marker
+              + f'  url "{os.environ["URL"]}"\n'
+              + f'  sha256 "{os.environ["SHA256"]}"\n'
+              + f'  version "{os.environ["VERSION"]}"\n'
+              + end_marker
+          )
+
+          updated = content[:start] + replacement + content[end + len(end_marker):]
+          path.write_text(updated, encoding="utf-8")
+          PY
+
+      - name: Validate formula syntax
+        run: ruby -c Formula/moonshine-flow.rb
+
+      - name: Commit and push if changed
+        env:
+          TAG_NAME: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- Formula/moonshine-flow.rb; then
+            echo "No formula changes detected"
+            exit 0
+          fi
+
+          git add Formula/moonshine-flow.rb
+          GIT_AUTHOR_NAME="github-actions[bot]" \
+          GIT_AUTHOR_EMAIL="41898282+github-actions[bot]@users.noreply.github.com" \
+          GIT_COMMITTER_NAME="github-actions[bot]" \
+          GIT_COMMITTER_EMAIL="41898282+github-actions[bot]@users.noreply.github.com" \
+          git commit -m "chore(formula): update Homebrew formula for ${TAG_NAME}"
+          git push

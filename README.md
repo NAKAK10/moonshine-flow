@@ -16,6 +16,48 @@ Hold a global hotkey to record, release to transcribe with Moonshine, then paste
 - Python 3.11+
 - [`uv`](https://docs.astral.sh/uv/)
 
+## Install with Homebrew (tap)
+
+### 日本語
+安定版（最初のGitHub Release以降）:
+```bash
+brew tap MadHatterNakashima/moonshine-flow https://github.com/MadHatterNakashima/moonshine-flow
+brew install moonshine-flow
+```
+
+最新版（mainブランチ）:
+```bash
+brew tap MadHatterNakashima/moonshine-flow https://github.com/MadHatterNakashima/moonshine-flow
+brew install --HEAD moonshine-flow
+```
+
+更新/削除:
+```bash
+brew upgrade moonshine-flow
+brew reinstall --HEAD moonshine-flow
+brew uninstall moonshine-flow
+```
+
+### Stable install (after first GitHub Release)
+```bash
+brew tap MadHatterNakashima/moonshine-flow https://github.com/MadHatterNakashima/moonshine-flow
+brew install moonshine-flow
+```
+
+### HEAD install (latest main branch)
+```bash
+brew tap MadHatterNakashima/moonshine-flow https://github.com/MadHatterNakashima/moonshine-flow
+brew install --HEAD moonshine-flow
+```
+
+Notes:
+- Stable formula fields (`url`, `sha256`, `version`) are auto-updated when a GitHub Release is published.
+- Before the first Release, use `--HEAD`.
+- Installation runs `uv sync --frozen` during formula install.
+- Update stable package: `brew upgrade moonshine-flow`
+- Reinstall HEAD package: `brew reinstall --HEAD moonshine-flow`
+- Uninstall: `brew uninstall moonshine-flow`
+
 ## Quick Start (English)
 
 ### 1. Install dependencies
