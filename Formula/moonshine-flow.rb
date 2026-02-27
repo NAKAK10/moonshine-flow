@@ -1,13 +1,13 @@
 class MoonshineFlow < Formula
   desc "Push-to-talk transcription daemon for macOS using Moonshine"
-  homepage "https://github.com/MadHatterNakashima/moonshine-flow"
+  homepage "https://github.com/NAKAK10/moonshine-flow"
   # stable-release: updated by GitHub Actions on release publish.
   # stable-release-start
   url "https://github.com/NAKAK10/moonshine-flow/archive/refs/tags/v0.0.1-beta.6.tar.gz"
   sha256 "8dcd626ba4d85131316cf9d07afa5866193a3c7f0f88620d9717b5ef316aa04d"
   version "0.0.1-beta.6"
   # stable-release-end
-  head "https://github.com/MadHatterNakashima/moonshine-flow.git", branch: "main"
+  head "https://github.com/NAKAK10/moonshine-flow.git", branch: "main"
   preserve_rpath
 
   depends_on "portaudio"
