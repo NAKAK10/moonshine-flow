@@ -3,9 +3,9 @@ class MoonshineFlow < Formula
   homepage "https://github.com/NAKAK10/moonshine-flow"
   # stable-release: updated by GitHub Actions on release publish.
   # stable-release-start
-  url "https://github.com/NAKAK10/moonshine-flow/archive/refs/tags/v0.0.5-beta.5.tar.gz"
-  sha256 "8b46911722acc59df4cb478a2504b2196526cfa1b0997b1182a591532417acba"
-  version "0.0.5-beta.5"
+  url "https://github.com/NAKAK10/moonshine-flow/archive/refs/tags/v0.0.5-beta.7.tar.gz"
+  sha256 "2ba2b4e24b29ae864ec4bf1ddf250a6b00939328d1bb7424178d1043ac83cd7b"
+  version "0.0.5-beta.7"
   # stable-release-end
   head "https://github.com/NAKAK10/moonshine-flow.git", branch: "main"
   preserve_rpath
