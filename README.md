@@ -104,6 +104,7 @@ Notes:
 - If required permissions remain missing, installation is aborted by default to avoid "hotkey works poorly / paste does not happen" states.
 - Use `--allow-missing-permissions` only when you intentionally want to install anyway.
 - Runtime auto-recovery output is quiet on success; use `--verbose-bootstrap` when you need full `uv sync` logs.
+- On successful install, the CLI prints `Permission target (recommended)`. Use that exact path in macOS permission settings.
 
 ## Config file
 Default: `~/.config/moonshine-flow/config.toml`  
@@ -129,6 +130,10 @@ Main settings:
 - Not sure where daemon logs are:
   1. Run `moonshine-flow doctor`.
   2. Check `LaunchAgent plist`, `LaunchAgent program`, `Daemon stdout log`, and `Daemon stderr log`.
+- `mflow` is enabled in Settings but hotkey still does not work:
+  1. Run `moonshine-flow doctor`.
+  2. In macOS privacy settings, enable the exact path shown as `Permission target (recommended)`.
+  3. Restart the agent: `launchctl kickstart -k gui/$(id -u)/com.moonshineflow.daemon`.
 - Cannot paste: verify Accessibility permission.
 - Hotkey not detected: verify Input Monitoring permission.
 - Cannot record: verify Microphone permission.

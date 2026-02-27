@@ -104,6 +104,7 @@ moonshine-flow uninstall-launch-agent
 - 必須権限が不足している場合、長押しや貼り付けが不安定になるのを防ぐため、既定ではインストールを中断します。
 - 意図的に継続したい場合だけ `--allow-missing-permissions` を使ってください。
 - runtime 自動修復ログは成功時は最小表示です。`uv sync` の詳細が必要なときだけ `--verbose-bootstrap` を指定してください。
+- インストール成功時に `Permission target (recommended)` が表示されます。macOS 権限設定ではそのパスをそのまま許可してください。
 
 ## 設定ファイル
 デフォルト: `~/.config/moonshine-flow/config.toml`  
@@ -129,6 +130,10 @@ moonshine-flow uninstall-launch-agent
 - デーモンログの場所が分からない:
   1. `moonshine-flow doctor` を実行。
   2. `LaunchAgent plist` / `LaunchAgent program` / `Daemon stdout log` / `Daemon stderr log` を確認。
+- 設定画面で `mflow` を ON にしてもホットキーが効かない:
+  1. `moonshine-flow doctor` を実行。
+  2. `Permission target (recommended)` に表示されたパスを、Privacy 設定で正確に許可。
+  3. `launchctl kickstart -k gui/$(id -u)/com.moonshineflow.daemon` で再起動。
 - 貼り付けできない: Accessibility 許可を確認。
 - ホットキーが反応しない: Input Monitoring 許可を確認。
 - 録音できない: Microphone 許可を確認。

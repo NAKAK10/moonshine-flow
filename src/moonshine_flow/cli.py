@@ -23,6 +23,7 @@ from moonshine_flow.logging_setup import configure_logging
 from moonshine_flow.permissions import (
     check_all_permissions,
     format_permission_guidance,
+    recommended_permission_target,
     request_all_permissions,
 )
 
@@ -141,6 +142,7 @@ def cmd_install_launch_agent(args: argparse.Namespace) -> int:
 
     plist_path = install_launch_agent(config_path)
     print(f"Installed launch agent: {plist_path}")
+    print(f"Permission target (recommended): {recommended_permission_target()}")
     return 0
 
 
@@ -168,6 +170,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     print(f"OS machine: {os_machine}")
     print(f"Python machine: {py_machine}")
     print(f"Config: {config_path}")
+    print(f"Permission target (recommended): {recommended_permission_target()}")
     launchd_payload = read_launch_agent_plist()
     out_log_path, err_log_path = launch_agent_log_paths()
     if launchd_payload is None:

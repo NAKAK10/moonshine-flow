@@ -238,13 +238,39 @@ def _resolve_python_app_from_executable(executable: Path) -> Path | None:
     )
 
 
+def _prefer_homebrew_opt_path(path: Path) -> Path:
+    text = str(path)
+    marker = "/Cellar/python@3.11/"
+    if marker not in text:
+        return path
+
+    prefix, suffix = text.split(marker, 1)
+    remainder = suffix.split("/", 1)
+    if len(remainder) < 2:
+        return path
+
+    return Path(prefix) / "opt" / "python@3.11" / remainder[1]
+
+
+def current_permission_executable() -> Path:
+    return Path(sys.executable).resolve(strict=False)
+
+
+def recommended_permission_target(executable: Path | None = None) -> Path:
+    resolved_executable = (executable or current_permission_executable()).resolve(strict=False)
+    python_app = _resolve_python_app_from_executable(resolved_executable)
+    if python_app is not None:
+        return _prefer_homebrew_opt_path(python_app)
+    return _prefer_homebrew_opt_path(resolved_executable)
+
+
 def format_permission_guidance(report: PermissionReport) -> str:
     """Build user-facing setup instructions for missing permissions."""
     if report.all_granted:
         return "All required permissions are granted."
 
-    executable = Path(sys.executable).resolve(strict=False)
-    python_app = _resolve_python_app_from_executable(executable)
+    executable = current_permission_executable()
+    preferred_target = recommended_permission_target(executable)
 
     lines = [
         "Missing macOS permissions detected:",
@@ -257,14 +283,12 @@ def format_permission_guidance(report: PermissionReport) -> str:
         "- Input Monitoring",
         "",
         f"Current executable: {executable}",
+        f"Preferred permission target: {preferred_target}",
     ]
 
-    if python_app is not None:
-        lines.extend(
-            [
-                f"Python app path: {python_app}",
-                "If daemon and terminal permission states differ, add this Python.app path manually.",
-            ]
+    if preferred_target != executable:
+        lines.append(
+            "If daemon and terminal permission states differ, enable the preferred target above."
         )
 
     if os.environ.get("XPC_SERVICE_NAME") == "com.moonshineflow.daemon":

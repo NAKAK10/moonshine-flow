@@ -1,10 +1,12 @@
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 from moonshine_flow.permissions import (
     PermissionReport,
     check_accessibility_permission,
     format_permission_guidance,
+    recommended_permission_target,
     request_accessibility_permission,
     request_all_permissions,
 )
@@ -107,20 +109,32 @@ def test_format_permission_guidance_includes_current_executable(monkeypatch) -> 
 
     assert "Missing macOS permissions detected:" in guidance
     assert "Current executable:" in guidance
+    assert "Preferred permission target:" in guidance
     assert guidance.count("python3.11") >= 1
 
 
-def test_format_permission_guidance_includes_python_app_path_and_launchd_hint(monkeypatch) -> None:
+def test_format_permission_guidance_includes_preferred_target_and_launchd_hint(monkeypatch) -> None:
     monkeypatch.setattr(
         sys,
         "executable",
-        "/opt/homebrew/opt/python@3.11/Frameworks/Python.framework/Versions/3.11/bin/python3.11",
+        "/opt/homebrew/Cellar/python@3.11/3.11.14_3/Frameworks/Python.framework/Versions/3.11/bin/python3.11",
     )
     monkeypatch.setenv("XPC_SERVICE_NAME", "com.moonshineflow.daemon")
     report = PermissionReport(microphone=False, accessibility=False, input_monitoring=False)
 
     guidance = format_permission_guidance(report)
 
-    assert "Python app path:" in guidance
-    assert "/Frameworks/Python.framework/Versions/3.11/Resources/Python.app" in guidance
+    assert "Preferred permission target:" in guidance
+    assert (
+        "/opt/homebrew/opt/python@3.11/Frameworks/Python.framework/Versions/3.11/Resources/Python.app"
+        in guidance
+    )
+    assert "enable the preferred target above" in guidance
     assert "Detected launchd context: com.moonshineflow.daemon" in guidance
+
+
+def test_recommended_permission_target_falls_back_to_executable(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "executable", "/tmp/custom/bin/python")
+
+    resolved = recommended_permission_target()
+    assert str(resolved).endswith("/tmp/custom/bin/python")
