@@ -37,6 +37,7 @@ def test_cmd_run_requests_missing_permissions_in_launchd_context(monkeypatch) ->
     )
     monkeypatch.setattr(cli, "configure_logging", lambda _level: None)
     monkeypatch.setattr(cli, "_has_moonshine_backend", lambda: True)
+    monkeypatch.setattr(cli, "consume_restart_permission_suppression", lambda: False)
     monkeypatch.setattr(cli, "check_all_permissions", lambda: permission_states.pop(0))
     monkeypatch.setattr(
         cli,
@@ -88,6 +89,7 @@ def test_cmd_run_skips_permission_requests_outside_launchd(monkeypatch) -> None:
     )
     monkeypatch.setattr(cli, "configure_logging", lambda _level: None)
     monkeypatch.setattr(cli, "_has_moonshine_backend", lambda: True)
+    monkeypatch.setattr(cli, "consume_restart_permission_suppression", lambda: False)
     monkeypatch.setattr(
         cli,
         "check_all_permissions",
@@ -109,6 +111,60 @@ def test_cmd_run_skips_permission_requests_outside_launchd(monkeypatch) -> None:
         lambda: calls.__setitem__("requests", calls["requests"] + 1) or True,
     )
     monkeypatch.delenv("XPC_SERVICE_NAME", raising=False)
+
+    exit_code = cli.cmd_run(argparse.Namespace(config=None))
+
+    assert exit_code == 0
+    assert calls["requests"] == 0
+    assert calls["stop"] == 1
+
+
+def test_cmd_run_skips_permission_requests_once_after_restart_marker(monkeypatch) -> None:
+    fake_daemon_mod = ModuleType("moonshine_flow.daemon")
+    calls = {"requests": 0, "stop": 0}
+
+    class FakeDaemon:
+        def __init__(self, _config) -> None:
+            self.transcriber = SimpleNamespace(preflight_model=lambda: "moonshine-voice")
+
+        def run_forever(self) -> None:
+            raise KeyboardInterrupt
+
+        def stop(self) -> None:
+            calls["stop"] += 1
+
+    fake_daemon_mod.MoonshineFlowDaemon = FakeDaemon
+    monkeypatch.setitem(sys.modules, "moonshine_flow.daemon", fake_daemon_mod)
+    monkeypatch.setattr(cli, "_resolve_config_path", lambda _: Path("/tmp/config.toml"))
+    monkeypatch.setattr(
+        cli,
+        "load_config",
+        lambda _: SimpleNamespace(runtime=SimpleNamespace(log_level="INFO")),
+    )
+    monkeypatch.setattr(cli, "configure_logging", lambda _level: None)
+    monkeypatch.setattr(cli, "_has_moonshine_backend", lambda: True)
+    monkeypatch.setattr(cli, "consume_restart_permission_suppression", lambda: True)
+    monkeypatch.setattr(
+        cli,
+        "check_all_permissions",
+        lambda: PermissionReport(microphone=False, accessibility=False, input_monitoring=False),
+    )
+    monkeypatch.setattr(
+        cli,
+        "request_microphone_permission",
+        lambda: calls.__setitem__("requests", calls["requests"] + 1) or True,
+    )
+    monkeypatch.setattr(
+        cli,
+        "request_accessibility_permission",
+        lambda: calls.__setitem__("requests", calls["requests"] + 1) or True,
+    )
+    monkeypatch.setattr(
+        cli,
+        "request_input_monitoring_permission",
+        lambda: calls.__setitem__("requests", calls["requests"] + 1) or True,
+    )
+    monkeypatch.setenv("XPC_SERVICE_NAME", "com.moonshineflow.daemon")
 
     exit_code = cli.cmd_run(argparse.Namespace(config=None))
 

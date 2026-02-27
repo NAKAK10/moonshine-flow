@@ -107,6 +107,8 @@ def test_restart_launch_agent_uses_kickstart_when_available(monkeypatch, tmp_pat
     plist = tmp_path / "com.moonshineflow.daemon.plist"
     plist.write_text("plist", encoding="utf-8")
     monkeypatch.setattr(launchd, "launch_agent_path", lambda: plist)
+    marker_path = tmp_path / "restart-suppression.json"
+    monkeypatch.setattr(launchd, "launch_agent_restart_suppression_path", lambda: marker_path)
     monkeypatch.setattr(
         launchd.subprocess,
         "check_output",
@@ -122,12 +124,15 @@ def test_restart_launch_agent_uses_kickstart_when_available(monkeypatch, tmp_pat
 
     assert launchd.restart_launch_agent() is True
     assert calls == [("kickstart", "-k", "gui/501/com.moonshineflow.daemon")]
+    assert marker_path.exists()
 
 
 def test_restart_launch_agent_falls_back_to_bootstrap(monkeypatch, tmp_path: Path) -> None:
     plist = tmp_path / "com.moonshineflow.daemon.plist"
     plist.write_text("plist", encoding="utf-8")
     monkeypatch.setattr(launchd, "launch_agent_path", lambda: plist)
+    marker_path = tmp_path / "restart-suppression.json"
+    monkeypatch.setattr(launchd, "launch_agent_restart_suppression_path", lambda: marker_path)
     monkeypatch.setattr(
         launchd.subprocess,
         "check_output",
@@ -149,12 +154,15 @@ def test_restart_launch_agent_falls_back_to_bootstrap(monkeypatch, tmp_path: Pat
         ("bootout", "gui/501", str(plist)),
         ("bootstrap", "gui/501", str(plist)),
     ]
+    assert marker_path.exists()
 
 
 def test_restart_launch_agent_raises_when_bootstrap_fails(monkeypatch, tmp_path: Path) -> None:
     plist = tmp_path / "com.moonshineflow.daemon.plist"
     plist.write_text("plist", encoding="utf-8")
     monkeypatch.setattr(launchd, "launch_agent_path", lambda: plist)
+    marker_path = tmp_path / "restart-suppression.json"
+    monkeypatch.setattr(launchd, "launch_agent_restart_suppression_path", lambda: marker_path)
     monkeypatch.setattr(
         launchd.subprocess,
         "check_output",
@@ -176,3 +184,41 @@ def test_restart_launch_agent_raises_when_bootstrap_fails(monkeypatch, tmp_path:
         assert "launchctl restart failed" in str(exc)
     else:
         raise AssertionError("expected RuntimeError")
+    assert not marker_path.exists()
+
+
+def test_mark_restart_permission_suppression_writes_marker(monkeypatch, tmp_path: Path) -> None:
+    marker_path = tmp_path / "restart-suppression.json"
+    monkeypatch.setattr(launchd, "launch_agent_restart_suppression_path", lambda: marker_path)
+    monkeypatch.setattr(launchd.time, "time", lambda: 100.0)
+
+    launchd.mark_restart_permission_suppression(ttl_seconds=30)
+
+    assert marker_path.exists()
+    assert '"expires_at": 130.0' in marker_path.read_text(encoding="utf-8")
+
+
+def test_consume_restart_permission_suppression_returns_true_and_removes_marker(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    marker_path = tmp_path / "restart-suppression.json"
+    marker_path.write_text('{"expires_at": 130}', encoding="utf-8")
+    monkeypatch.setattr(launchd, "launch_agent_restart_suppression_path", lambda: marker_path)
+    monkeypatch.setattr(launchd.time, "time", lambda: 120.0)
+
+    assert launchd.consume_restart_permission_suppression() is True
+    assert not marker_path.exists()
+
+
+def test_consume_restart_permission_suppression_returns_false_when_expired(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    marker_path = tmp_path / "restart-suppression.json"
+    marker_path.write_text('{"expires_at": 130}', encoding="utf-8")
+    monkeypatch.setattr(launchd, "launch_agent_restart_suppression_path", lambda: marker_path)
+    monkeypatch.setattr(launchd.time, "time", lambda: 131.0)
+
+    assert launchd.consume_restart_permission_suppression() is False
+    assert not marker_path.exists()

@@ -15,6 +15,7 @@ from moonshine_flow.app_bundle import default_app_bundle_path, install_app_bundl
 from moonshine_flow.config import default_config_path, load_config
 from moonshine_flow.launchd import (
     LAUNCH_AGENT_LABEL,
+    consume_restart_permission_suppression,
     install_launch_agent,
     launch_agent_log_paths,
     launch_agent_path,
@@ -74,15 +75,19 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     report = check_all_permissions()
     in_launchd_context = os.environ.get("XPC_SERVICE_NAME") == LAUNCH_AGENT_LABEL
+    suppressed_after_restart = in_launchd_context and consume_restart_permission_suppression()
     if in_launchd_context and not report.all_granted:
-        # Trigger prompts from daemon context so launchd-triggered runs can obtain trust.
-        if not report.accessibility:
-            request_accessibility_permission()
-        if not report.input_monitoring:
-            request_input_monitoring_permission()
-        if not report.microphone:
-            request_microphone_permission()
-        report = check_all_permissions()
+        if suppressed_after_restart:
+            LOGGER.info("Skipping permission request once after restart-launch-agent")
+        else:
+            # Trigger prompts from daemon context so launchd-triggered runs can obtain trust.
+            if not report.accessibility:
+                request_accessibility_permission()
+            if not report.input_monitoring:
+                request_input_monitoring_permission()
+            if not report.microphone:
+                request_microphone_permission()
+            report = check_all_permissions()
     if not report.all_granted:
         LOGGER.warning(format_permission_guidance(report))
 
