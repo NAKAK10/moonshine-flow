@@ -38,5 +38,11 @@ class MoonshineFlow < Formula
 
   test do
     assert_match "moonshine-flow", shell_output("#{bin}/moonshine-flow --help")
+    probe = shell_output(
+      <<~EOS
+        #{opt_libexec}/.venv/bin/python -c "import ctypes; import moonshine_voice; from pathlib import Path; lib = Path(moonshine_voice.__file__).resolve().with_name('libmoonshine.dylib'); ctypes.CDLL(str(lib)); print('moonshine-runtime-ok')"
+      EOS
+    )
+    assert_match "moonshine-runtime-ok", probe
   end
 end

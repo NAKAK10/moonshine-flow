@@ -6,7 +6,9 @@ from moonshine_flow.homebrew_bootstrap import (
     ProjectFingerprint,
     RuntimeCandidate,
     RuntimeManager,
+    RuntimeProbeResult,
     RuntimeStateStore,
+    Toolchain,
     _parse_bootstrap_args,
 )
 
@@ -31,7 +33,20 @@ class _FakeBuilder:
         python.chmod(0o755)
 
 
-def _write_python(path: Path) -> None:
+class _FakeProbe:
+    def __init__(self, callback) -> None:
+        self._callback = callback
+
+    def probe(self, runtime: RuntimeCandidate) -> RuntimeProbeResult:
+        return self._callback(runtime)
+
+
+def _probe_from_executable(runtime: RuntimeCandidate) -> RuntimeProbeResult:
+    ok = runtime.python_path.exists()
+    return RuntimeProbeResult(ok=ok, python_arch=runtime.toolchain.arch)
+
+
+def _write_executable(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     path.chmod(0o755)
@@ -52,12 +67,15 @@ def test_project_fingerprint_changes_with_lockfile(tmp_path: Path) -> None:
     assert first != second
 
 
-def test_runtime_manager_prefers_primary_runtime(tmp_path: Path) -> None:
+def test_runtime_manager_prefers_primary_arch_runtime(tmp_path: Path) -> None:
     project_dir = tmp_path / "libexec"
     state_dir = tmp_path / "var"
     builder = _FakeBuilder()
 
-    _write_python(project_dir / ".venv" / "bin" / "python")
+    primary_python = project_dir / ".venv-arm64" / "bin" / "python"
+    primary_python.parent.mkdir(parents=True, exist_ok=True)
+    primary_python.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    primary_python.chmod(0o755)
 
     manager = RuntimeManager(
         project_dir=project_dir,
@@ -66,10 +84,14 @@ def test_runtime_manager_prefers_primary_runtime(tmp_path: Path) -> None:
         uv_bin=tmp_path / "uv",
         builder=builder,
         fingerprint=_FixedFingerprint("abc"),
+        runtime_probe=_FakeProbe(_probe_from_executable),
+        toolchains=[Toolchain("primary", tmp_path / "python3.11", tmp_path / "uv", "arm64")],
+        host_arch="arm64",
     )
 
     runtime = manager.resolve_runtime()
-    assert runtime.name == "primary"
+    assert runtime.name == "primary-arm64"
+    assert runtime.venv_dir == project_dir / ".venv-arm64"
     assert builder.calls == 0
 
 
@@ -78,6 +100,9 @@ def test_runtime_manager_builds_recovery_runtime_when_primary_missing(tmp_path: 
     state_dir = tmp_path / "var"
     builder = _FakeBuilder()
 
+    _write_executable(tmp_path / "python3.11")
+    _write_executable(tmp_path / "uv")
+
     manager = RuntimeManager(
         project_dir=project_dir,
         state_dir=state_dir,
@@ -85,14 +110,20 @@ def test_runtime_manager_builds_recovery_runtime_when_primary_missing(tmp_path: 
         uv_bin=tmp_path / "uv",
         builder=builder,
         fingerprint=_FixedFingerprint("expected"),
+        runtime_probe=_FakeProbe(_probe_from_executable),
+        toolchains=[Toolchain("primary", tmp_path / "python3.11", tmp_path / "uv", "arm64")],
+        host_arch="arm64",
     )
 
     runtime = manager.resolve_runtime()
     store = RuntimeStateStore(state_dir)
 
-    assert runtime.name == "recovery"
+    assert runtime.name == "recovery-arm64"
+    assert runtime.venv_dir == state_dir / ".venv-arm64"
     assert builder.calls == 1
-    assert store.read() == "expected"
+    assert store.read(scope="arm64") == "expected|arch=arm64|python=" + str(
+        tmp_path / "python3.11"
+    ) + "|uv=" + str(tmp_path / "uv")
 
 
 def test_runtime_manager_rebuilds_when_fingerprint_mismatch(tmp_path: Path) -> None:
@@ -101,9 +132,14 @@ def test_runtime_manager_rebuilds_when_fingerprint_mismatch(tmp_path: Path) -> N
     builder = _FakeBuilder()
     store = RuntimeStateStore(state_dir)
 
-    recovery_python = state_dir / ".venv" / "bin" / "python"
-    _write_python(recovery_python)
-    store.write("old")
+    recovery_python = state_dir / ".venv-arm64" / "bin" / "python"
+    recovery_python.parent.mkdir(parents=True, exist_ok=True)
+    recovery_python.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    recovery_python.chmod(0o755)
+    store.write("old", scope="arm64")
+
+    _write_executable(tmp_path / "python3.11")
+    _write_executable(tmp_path / "uv")
 
     manager = RuntimeManager(
         project_dir=project_dir,
@@ -113,13 +149,59 @@ def test_runtime_manager_rebuilds_when_fingerprint_mismatch(tmp_path: Path) -> N
         builder=builder,
         state_store=store,
         fingerprint=_FixedFingerprint("new"),
+        runtime_probe=_FakeProbe(_probe_from_executable),
+        toolchains=[Toolchain("primary", tmp_path / "python3.11", tmp_path / "uv", "arm64")],
+        host_arch="arm64",
     )
 
     runtime = manager.resolve_runtime()
 
-    assert runtime.name == "recovery"
+    assert runtime.name == "recovery-arm64"
     assert builder.calls == 1
-    assert store.read() == "new"
+    assert store.read(scope="arm64") == "new|arch=arm64|python=" + str(
+        tmp_path / "python3.11"
+    ) + "|uv=" + str(tmp_path / "uv")
+
+
+def test_runtime_manager_falls_back_to_secondary_toolchain(tmp_path: Path) -> None:
+    project_dir = tmp_path / "libexec"
+    state_dir = tmp_path / "var"
+    builder = _FakeBuilder()
+
+    primary_toolchain = Toolchain("primary", tmp_path / "python-x86", tmp_path / "uv-x86", "x86_64")
+    fallback_toolchain = Toolchain("opt-homebrew", tmp_path / "python-arm", tmp_path / "uv-arm", "arm64")
+
+    for tool in (primary_toolchain, fallback_toolchain):
+        _write_executable(tool.python_bin)
+        _write_executable(tool.uv_bin)
+
+    def probe(runtime: RuntimeCandidate) -> RuntimeProbeResult:
+        if runtime.toolchain.name == "primary":
+            return RuntimeProbeResult(
+                ok=False,
+                python_arch="x86_64",
+                lib_arches="arm64",
+                error="incompatible architecture",
+            )
+        return _probe_from_executable(runtime)
+
+    manager = RuntimeManager(
+        project_dir=project_dir,
+        state_dir=state_dir,
+        python_bin=primary_toolchain.python_bin,
+        uv_bin=primary_toolchain.uv_bin,
+        builder=builder,
+        fingerprint=_FixedFingerprint("expected"),
+        runtime_probe=_FakeProbe(probe),
+        toolchains=[primary_toolchain, fallback_toolchain],
+        host_arch="arm64",
+    )
+
+    runtime = manager.resolve_runtime()
+
+    assert runtime.name == "recovery-arm64"
+    assert runtime.toolchain.name == "opt-homebrew"
+    assert builder.calls == 2
 
 
 def test_parse_bootstrap_args_preserves_cli_options_after_separator() -> None:

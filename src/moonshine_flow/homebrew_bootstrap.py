@@ -9,10 +9,13 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import os
+import platform
 import shutil
 import subprocess
 import sys
+import textwrap
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, Sequence
@@ -23,11 +26,23 @@ class RuntimeRepairError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class Toolchain:
+    """Represents one python/uv toolchain pair."""
+
+    name: str
+    python_bin: Path
+    uv_bin: Path
+    arch: str
+
+
+@dataclass(frozen=True)
 class RuntimeCandidate:
     """Represents one virtual environment candidate."""
 
     name: str
     venv_dir: Path
+    toolchain: Toolchain
+    scope: str
 
     @property
     def python_path(self) -> Path:
@@ -46,6 +61,26 @@ class FingerprintProvider(Protocol):
 
     def build(self) -> str:
         """Return runtime fingerprint text."""
+
+
+@dataclass(frozen=True)
+class RuntimeProbeResult:
+    """Result of probing one runtime candidate."""
+
+    ok: bool
+    python_arch: str | None = None
+    lib_path: str | None = None
+    lib_arches: str | None = None
+    error: str | None = None
+    stderr: str | None = None
+    returncode: int | None = None
+
+
+class RuntimeProbe(Protocol):
+    """Runtime health probe contract."""
+
+    def probe(self, runtime: RuntimeCandidate) -> RuntimeProbeResult:
+        """Probe runtime for moonshine binary compatibility."""
 
 
 class ProjectFingerprint:
@@ -72,43 +107,152 @@ class RuntimeStateStore:
     """Persists the active runtime fingerprint."""
 
     def __init__(self, state_dir: Path) -> None:
-        self._state_file = state_dir / "runtime-fingerprint.txt"
+        self._state_dir = state_dir
 
-    def read(self) -> str | None:
-        if not self._state_file.exists():
+    def _state_file(self, scope: str | None = None) -> Path:
+        if not scope:
+            return self._state_dir / "runtime-fingerprint.txt"
+        safe_scope = "".join(char if char.isalnum() or char in {"-", "_"} else "-" for char in scope)
+        return self._state_dir / f"runtime-fingerprint-{safe_scope}.txt"
+
+    def read(self, scope: str | None = None) -> str | None:
+        state_file = self._state_file(scope)
+        if not state_file.exists():
             return None
-        return self._state_file.read_text(encoding="utf-8").strip() or None
+        return state_file.read_text(encoding="utf-8").strip() or None
 
-    def write(self, value: str) -> None:
-        self._state_file.parent.mkdir(parents=True, exist_ok=True)
-        self._state_file.write_text(f"{value}\n", encoding="utf-8")
+    def write(self, value: str, scope: str | None = None) -> None:
+        state_file = self._state_file(scope)
+        state_file.parent.mkdir(parents=True, exist_ok=True)
+        state_file.write_text(f"{value}\n", encoding="utf-8")
+
+
+_PROBE_SCRIPT = textwrap.dedent(
+    """
+    import ctypes
+    import json
+    import platform
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    def describe_arches(path: Path) -> str | None:
+        path_text = str(path)
+        for cmd in (
+            ["/usr/bin/lipo", "-archs", path_text],
+            ["/usr/bin/file", path_text],
+        ):
+            try:
+                output = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL).strip()
+            except Exception:
+                continue
+            if output:
+                return output
+        return None
+
+    result = {
+        "ok": False,
+        "python_arch": platform.machine(),
+        "lib_path": None,
+        "lib_arches": None,
+        "error": None,
+    }
+
+    try:
+        import moonshine_voice
+
+        package_path = Path(moonshine_voice.__file__).resolve()
+        lib_path = package_path.with_name("libmoonshine.dylib")
+        result["lib_path"] = str(lib_path)
+        result["lib_arches"] = describe_arches(lib_path)
+        ctypes.CDLL(str(lib_path))
+        result["ok"] = True
+    except Exception as exc:
+        result["error"] = str(exc)
+
+    print(json.dumps(result))
+    raise SystemExit(0 if result["ok"] else 2)
+    """
+)
+
+
+class SubprocessRuntimeProbe:
+    """Probes runtime by executing a compatibility script in that venv."""
+
+    def __init__(self, script: str = _PROBE_SCRIPT) -> None:
+        self._script = script
+
+    def probe(self, runtime: RuntimeCandidate) -> RuntimeProbeResult:
+        python = runtime.python_path
+        if not python.exists() or not os.access(python, os.X_OK):
+            return RuntimeProbeResult(ok=False, error="runtime python is missing or not executable")
+
+        try:
+            process = subprocess.run(
+                [str(python), "-c", self._script],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        except OSError as exc:
+            return RuntimeProbeResult(ok=False, error=f"failed to execute runtime python: {exc}")
+
+        payload = _extract_probe_payload(process.stdout)
+        if payload is None:
+            if process.returncode == 0:
+                return RuntimeProbeResult(ok=True, returncode=process.returncode)
+            output_error = process.stdout.strip().splitlines()[-1] if process.stdout.strip() else None
+            fallback_error = "runtime probe failed without JSON output"
+            if output_error:
+                fallback_error = f"{fallback_error}: {output_error}"
+            return RuntimeProbeResult(
+                ok=False,
+                error=fallback_error,
+                stderr=process.stderr.strip() or None,
+                returncode=process.returncode,
+            )
+
+        error = _string_or_none(payload.get("error"))
+        ok = bool(payload.get("ok")) and process.returncode == 0
+        if not ok and not error:
+            error = process.stderr.strip() or f"runtime probe failed (exit {process.returncode})"
+
+        return RuntimeProbeResult(
+            ok=ok,
+            python_arch=_normalize_arch(_string_or_none(payload.get("python_arch"))),
+            lib_path=_string_or_none(payload.get("lib_path")),
+            lib_arches=_string_or_none(payload.get("lib_arches")),
+            error=error,
+            stderr=process.stderr.strip() or None,
+            returncode=process.returncode,
+        )
 
 
 class RuntimeBuilder:
     """Creates and syncs a runtime virtual environment."""
 
-    def __init__(self, project_dir: Path, python_bin: Path, uv_bin: Path) -> None:
+    def __init__(self, project_dir: Path) -> None:
         self._project_dir = project_dir
-        self._python_bin = python_bin
-        self._uv_bin = uv_bin
 
     def rebuild(self, runtime: RuntimeCandidate) -> None:
+        python_bin = runtime.toolchain.python_bin
+        uv_bin = runtime.toolchain.uv_bin
         runtime.venv_dir.parent.mkdir(parents=True, exist_ok=True)
         if runtime.venv_dir.exists():
             shutil.rmtree(runtime.venv_dir)
 
-        self._run([str(self._python_bin), "-m", "venv", str(runtime.venv_dir)])
+        self._run([str(python_bin), "-m", "venv", str(runtime.venv_dir)])
 
         env = os.environ.copy()
         env["UV_PROJECT"] = str(self._project_dir)
-        env["UV_PYTHON"] = str(self._python_bin)
+        env["UV_PYTHON"] = str(python_bin)
         env["UV_PYTHON_DOWNLOADS"] = "never"
         env["VIRTUAL_ENV"] = str(runtime.venv_dir)
         env["PATH"] = f"{runtime.venv_dir / 'bin'}:{env.get('PATH', '')}"
 
         self._run(
             [
-                str(self._uv_bin),
+                str(uv_bin),
                 "sync",
                 "--project",
                 str(self._project_dir),
@@ -143,28 +287,39 @@ class RuntimeManager:
         builder: RuntimeBuilder | None = None,
         state_store: RuntimeStateStore | None = None,
         fingerprint: FingerprintProvider | None = None,
+        runtime_probe: RuntimeProbe | None = None,
+        toolchains: Sequence[Toolchain] | None = None,
+        host_arch: str | None = None,
     ) -> None:
-        self._primary = RuntimeCandidate("primary", project_dir / ".venv")
-        self._recovery = RuntimeCandidate("recovery", state_dir / ".venv")
-        self._builder = builder or RuntimeBuilder(project_dir, python_bin, uv_bin)
+        self._project_dir = project_dir
+        self._state_dir = state_dir
+        self._host_arch = _normalize_arch(
+            host_arch
+            or (os.uname().machine if hasattr(os, "uname") else platform.machine())
+        )
+        self._builder = builder or RuntimeBuilder(project_dir)
         self._state_store = state_store or RuntimeStateStore(state_dir)
         self._fingerprint = fingerprint or ProjectFingerprint(project_dir)
+        self._runtime_probe = runtime_probe or SubprocessRuntimeProbe()
+        self._toolchains = list(toolchains) or _discover_toolchains(
+            python_bin=python_bin,
+            uv_bin=uv_bin,
+            host_arch=self._host_arch,
+        )
+        if not self._toolchains:
+            self._toolchains = [Toolchain("primary", python_bin, uv_bin, self._host_arch)]
 
     def resolve_runtime(self) -> RuntimeCandidate:
-        if self._primary.is_healthy():
-            return self._primary
+        failures: list[str] = []
+        for toolchain in self._toolchains:
+            try:
+                return self._resolve_for_toolchain(toolchain)
+            except RuntimeRepairError as exc:
+                failures.append(str(exc))
 
-        expected = self._fingerprint.build()
-        current = self._state_store.read()
-        should_rebuild = not self._recovery.is_healthy() or current != expected
-        if should_rebuild:
-            self._emit_recovery_notice()
-            self._builder.rebuild(self._recovery)
-            self._state_store.write(expected)
-
-        if self._recovery.is_healthy():
-            return self._recovery
-
+        if failures:
+            detail = "\n".join(failures)
+            raise RuntimeRepairError(f"No healthy runtime available after recovery.\n{detail}")
         raise RuntimeRepairError("No healthy runtime available after recovery")
 
     def launch(self, cli_args: Sequence[str]) -> None:
@@ -172,11 +327,219 @@ class RuntimeManager:
         command = runtime.cli_command(cli_args)
         os.execv(command[0], command)
 
-    def _emit_recovery_notice(self) -> None:
+    def _resolve_for_toolchain(self, toolchain: Toolchain) -> RuntimeCandidate:
+        primary = RuntimeCandidate(
+            name=f"primary-{toolchain.arch}",
+            venv_dir=self._project_dir / f".venv-{toolchain.arch}",
+            toolchain=toolchain,
+            scope=toolchain.arch,
+        )
+        legacy_primary = RuntimeCandidate(
+            name=f"primary-legacy-{toolchain.arch}",
+            venv_dir=self._project_dir / ".venv",
+            toolchain=toolchain,
+            scope=toolchain.arch,
+        )
+        recovery = RuntimeCandidate(
+            name=f"recovery-{toolchain.arch}",
+            venv_dir=self._state_dir / f".venv-{toolchain.arch}",
+            toolchain=toolchain,
+            scope=toolchain.arch,
+        )
+
+        probes: list[tuple[RuntimeCandidate, RuntimeProbeResult]] = []
+
+        for candidate in (primary, legacy_primary):
+            probe = self._runtime_probe.probe(candidate)
+            probes.append((candidate, probe))
+            if probe.ok:
+                return candidate
+
+        expected = self._runtime_fingerprint(toolchain)
+        current = self._state_store.read(scope=recovery.scope)
+        recovery_probe = self._runtime_probe.probe(recovery)
+        probes.append((recovery, recovery_probe))
+        should_rebuild = not recovery_probe.ok or current != expected
+        if should_rebuild:
+            self._ensure_toolchain(toolchain)
+            self._emit_recovery_notice(toolchain, recovery_probe)
+            self._builder.rebuild(recovery)
+            self._state_store.write(expected, scope=recovery.scope)
+            recovery_probe = self._runtime_probe.probe(recovery)
+            probes[-1] = (recovery, recovery_probe)
+
+        if recovery_probe.ok:
+            return recovery
+
+        raise RuntimeRepairError(self._format_probe_failure(toolchain, probes))
+
+    def _runtime_fingerprint(self, toolchain: Toolchain) -> str:
+        return (
+            f"{self._fingerprint.build()}|arch={toolchain.arch}"
+            f"|python={toolchain.python_bin}|uv={toolchain.uv_bin}"
+        )
+
+    @staticmethod
+    def _ensure_toolchain(toolchain: Toolchain) -> None:
+        for label, path in (("python", toolchain.python_bin), ("uv", toolchain.uv_bin)):
+            if not path.exists():
+                raise RuntimeRepairError(
+                    f"Toolchain '{toolchain.name}' is missing {label}: {path}"
+                )
+            if not os.access(path, os.X_OK):
+                raise RuntimeRepairError(
+                    f"Toolchain '{toolchain.name}' has non-executable {label}: {path}"
+                )
+
+    def _emit_recovery_notice(
+        self,
+        toolchain: Toolchain,
+        previous_probe: RuntimeProbeResult | None = None,
+    ) -> None:
+        detail = ""
+        if previous_probe and previous_probe.error:
+            detail = f" Last error: {previous_probe.error}"
         print(
-            "moonshine-flow runtime is unavailable. Rebuilding runtime cache...",
+            "moonshine-flow runtime is unavailable "
+            f"(toolchain={toolchain.name}, arch={toolchain.arch}). "
+            f"Rebuilding runtime cache...{detail}",
             file=sys.stderr,
         )
+
+    def _format_probe_failure(
+        self,
+        toolchain: Toolchain,
+        probes: Sequence[tuple[RuntimeCandidate, RuntimeProbeResult]],
+    ) -> str:
+        lines = [
+            f"Toolchain '{toolchain.name}' failed "
+            f"(arch={toolchain.arch}, python={toolchain.python_bin}, uv={toolchain.uv_bin})",
+        ]
+        for runtime, probe in probes:
+            lines.append(f"- {runtime.name}: {self._summarize_probe(runtime, probe)}")
+        if self._host_arch == "arm64" and toolchain.arch == "x86_64":
+            lines.append(
+                "- hint: Apple Silicon host is using an x86_64 runtime. "
+                "Install arm64 python@3.11 and uv in /opt/homebrew."
+            )
+        return "\n".join(lines)
+
+    @staticmethod
+    def _summarize_probe(runtime: RuntimeCandidate, probe: RuntimeProbeResult) -> str:
+        if probe.ok:
+            return f"ok (python={runtime.python_path})"
+        parts = [f"python={runtime.python_path}"]
+        if probe.python_arch:
+            parts.append(f"python_arch={probe.python_arch}")
+        if probe.lib_arches:
+            parts.append(f"lib_arches={probe.lib_arches}")
+        if probe.lib_path:
+            parts.append(f"lib={probe.lib_path}")
+        if probe.error:
+            parts.append(f"error={probe.error}")
+        if probe.stderr and not probe.error:
+            parts.append(f"stderr={probe.stderr}")
+        if probe.returncode is not None:
+            parts.append(f"exit={probe.returncode}")
+        return "; ".join(parts)
+
+
+def _extract_probe_payload(output: str) -> dict[str, object] | None:
+    for line in reversed(output.splitlines()):
+        text = line.strip()
+        if not text.startswith("{"):
+            continue
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
+
+
+def _string_or_none(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _normalize_arch(value: str | None) -> str:
+    if not value:
+        return "unknown"
+    text = value.strip().lower()
+    if text in {"arm64", "aarch64"}:
+        return "arm64"
+    if text in {"x86_64", "amd64"}:
+        return "x86_64"
+    if "arm64" in text and "x86_64" not in text:
+        return "arm64"
+    if "x86_64" in text and "arm64" not in text:
+        return "x86_64"
+    if "x86_64" in text and "arm64" in text:
+        return "universal2"
+    return text.replace(" ", "_")
+
+
+def _describe_binary_arch(binary_path: Path) -> str | None:
+    path_text = str(binary_path)
+    for command in (
+        ["/usr/bin/lipo", "-archs", path_text],
+        ["/usr/bin/file", path_text],
+    ):
+        try:
+            output = subprocess.check_output(command, text=True, stderr=subprocess.DEVNULL).strip()
+        except (FileNotFoundError, subprocess.CalledProcessError, OSError):
+            continue
+        if output:
+            return output
+    return None
+
+
+def _detect_python_arch(python_bin: Path, default_arch: str) -> str:
+    if python_bin.exists() and os.access(python_bin, os.X_OK):
+        try:
+            process = subprocess.run(
+                [str(python_bin), "-c", "import platform; print(platform.machine())"],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        except OSError:
+            process = None
+        if process is not None and process.returncode == 0:
+            detected = _normalize_arch(process.stdout.strip())
+            if detected != "unknown":
+                return detected
+
+    described = _normalize_arch(_describe_binary_arch(python_bin))
+    if described != "unknown":
+        return described
+    return default_arch
+
+
+def _discover_toolchains(*, python_bin: Path, uv_bin: Path, host_arch: str) -> list[Toolchain]:
+    toolchains: list[Toolchain] = []
+    seen: set[tuple[Path, Path, str]] = set()
+
+    def add_toolchain(name: str, python_path: Path, uv_path: Path) -> None:
+        arch = _detect_python_arch(python_path, default_arch=host_arch)
+        key = (python_path.resolve(strict=False), uv_path.resolve(strict=False), arch)
+        if key in seen:
+            return
+        seen.add(key)
+        toolchains.append(Toolchain(name=name, python_bin=python_path, uv_bin=uv_path, arch=arch))
+
+    add_toolchain("primary", python_bin, uv_bin)
+
+    if host_arch == "arm64":
+        opt_python = Path("/opt/homebrew/opt/python@3.11/bin/python3.11")
+        opt_uv = Path("/opt/homebrew/opt/uv/bin/uv")
+        if opt_python.exists() and opt_uv.exists():
+            add_toolchain("opt-homebrew", opt_python, opt_uv)
+
+    return toolchains
 
 
 def _parse_bootstrap_args(argv: Sequence[str]) -> tuple[argparse.Namespace, list[str]]:
@@ -204,6 +567,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     except RuntimeRepairError as exc:
         print(f"moonshine-flow runtime recovery failed: {exc}", file=sys.stderr)
         print("Try: brew reinstall moonshine-flow", file=sys.stderr)
+        print(
+            "If this is an Apple Silicon machine using /usr/local Homebrew, "
+            "install arm64 python@3.11 and uv under /opt/homebrew.",
+            file=sys.stderr,
+        )
         return 1
     return 0
 

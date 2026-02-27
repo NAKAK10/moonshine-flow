@@ -60,6 +60,12 @@ def cmd_run(args: argparse.Namespace) -> int:
         LOGGER.info("Model preflight OK (%s)", backend)
     except Exception as exc:
         LOGGER.error("Model preflight failed: %s", exc)
+        if "incompatible architecture" in str(exc).lower():
+            LOGGER.error(
+                "Detected architecture mismatch between Python runtime and Moonshine binaries. "
+                "Run `moonshine-flow doctor` and ensure arm64 python@3.11 + uv are available on "
+                "Apple Silicon (typically under /opt/homebrew)."
+            )
         return 4
 
     try:

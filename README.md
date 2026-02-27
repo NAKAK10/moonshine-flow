@@ -36,6 +36,12 @@ brew uninstall moonshine-flow
 - Homebrew auto-update が原因で失敗する環境では、必要時のみ `HOMEBREW_NO_AUTO_UPDATE=1` を付けてください。
 - ランタイムが壊れた場合は、起動時に `$(brew --prefix)/var/moonshine-flow` 配下を自動修復します。
 
+### アーキテクチャ互換（Apple Silicon / Intel）
+- `moonshine-flow` は起動時に runtime の自己診断を行い、`moonshine_voice/libmoonshine.dylib` の読み込み可否まで検証します。
+- Apple Silicon (`arm64`) で `/usr/local` Homebrew を使っている場合、x86_64 Python runtime と arm64 dylib が衝突することがあります。
+- 衝突時は `$(brew --prefix)/var/moonshine-flow/.venv-<arch>` を再構築し、それでも失敗する場合は `/opt/homebrew` 側の `python@3.11` と `uv` へフォールバックを試行します。
+- `/opt/homebrew` 側に `python@3.11` と `uv` が無い場合は、エラーメッセージに表示された手順に従って導入してください。
+
 ## 初期セットアップ
 ```bash
 moonshine-flow doctor
@@ -68,6 +74,10 @@ moonshine-flow uninstall-launch-agent
 
 ## トラブルシュート
 - `bad interpreter` が出る: `moonshine-flow --help` を再実行して自己修復を待つ。解消しない場合は `brew reinstall moonshine-flow`。
+- `incompatible architecture` が出る:
+  1. `moonshine-flow doctor` で `OS machine` / `Python machine` を確認。
+  2. Apple Silicon なら arm64 toolchain を用意（例: `/opt/homebrew/bin/brew install python@3.11 uv`）。
+  3. `brew reinstall moonshine-flow` 後に再実行。
 - 貼り付けできない: Accessibility 許可を確認。
 - ホットキーが反応しない: Input Monitoring 許可を確認。
 - 録音できない: Microphone 許可を確認。
@@ -77,6 +87,35 @@ moonshine-flow uninstall-launch-agent
 - macOS（Apple Silicon / arm64）
 - Python 3.11
 - `uv`
+
+### clone 後の環境確認（Python）
+```bash
+git clone https://github.com/NAKAK10/moonshine-flow.git
+cd moonshine-flow
+```
+
+1) Python バージョンとアーキ確認:
+```bash
+python3.11 -V
+python3.11 -c "import platform; print(platform.machine())"
+```
+
+2) 依存インストール:
+```bash
+uv sync --extra dev
+```
+
+3) ランタイム診断:
+```bash
+uv run moonshine-flow doctor
+```
+`OS machine` と `Python machine` が一致していることを確認してください。  
+Apple Silicon で `Python machine: x86_64` の場合は Rosetta 実行です。
+
+4) Moonshine ライブラリのロード確認:
+```bash
+uv run python -c "import ctypes, moonshine_voice; from pathlib import Path; lib = Path(moonshine_voice.__file__).resolve().with_name('libmoonshine.dylib'); ctypes.CDLL(str(lib)); print('moonshine dylib ok')"
+```
 
 セットアップ:
 ```bash
