@@ -630,10 +630,65 @@ def _parse_bootstrap_args(argv: Sequence[str]) -> tuple[argparse.Namespace, list
     return options, cli_args
 
 
+def _is_version_query(cli_args: Sequence[str]) -> bool:
+    if not cli_args:
+        return False
+    version_flags = {"-v", "--version"}
+    return all(arg in version_flags for arg in cli_args)
+
+
+def _resolve_formula_version_from_project_dir(project_dir: Path) -> str | None:
+    parts = project_dir.resolve().parts
+    for idx, part in enumerate(parts):
+        if part != "Cellar":
+            continue
+        if idx + 2 >= len(parts):
+            break
+        if parts[idx + 1] != "moonshine-flow":
+            continue
+        candidate = parts[idx + 2].strip()
+        if candidate:
+            return candidate
+        break
+    return None
+
+
+def _resolve_fast_version(project_dir: Path) -> str:
+    venv_python = project_dir / ".venv" / "bin" / "python"
+    if venv_python.exists() and os.access(venv_python, os.X_OK):
+        try:
+            process = subprocess.run(
+                [
+                    str(venv_python),
+                    "-c",
+                    "from importlib.metadata import version; print(version('moonshine-flow'))",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        except OSError:
+            process = None
+        if process is not None and process.returncode == 0:
+            resolved = process.stdout.strip()
+            if resolved:
+                return resolved
+
+    fallback = _resolve_formula_version_from_project_dir(project_dir)
+    if fallback:
+        return fallback
+    return "0.0.0.dev0"
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     options, cli_args = _parse_bootstrap_args(argv or sys.argv[1:])
+    project_dir = Path(options.libexec)
+    if _is_version_query(cli_args):
+        print(f"moonshine-flow {_resolve_fast_version(project_dir)}")
+        return 0
+
     manager = RuntimeManager(
-        project_dir=Path(options.libexec),
+        project_dir=project_dir,
         state_dir=Path(options.var_dir),
         python_bin=Path(options.python),
         uv_bin=Path(options.uv),

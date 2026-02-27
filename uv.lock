@@ -113,7 +113,6 @@ wheels = [
 
 [[package]]
 name = "moonshine-flow"
-version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "moonshine-voice" },

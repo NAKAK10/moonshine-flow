@@ -384,6 +384,72 @@ def test_parse_bootstrap_args_preserves_cli_options_after_separator() -> None:
     assert cli_args == ["--help"]
 
 
+def test_is_version_query() -> None:
+    assert bootstrap._is_version_query(["-v"]) is True
+    assert bootstrap._is_version_query(["--version"]) is True
+    assert bootstrap._is_version_query(["-v", "--version"]) is True
+    assert bootstrap._is_version_query([]) is False
+    assert bootstrap._is_version_query(["run"]) is False
+
+
+def test_resolve_formula_version_from_project_dir_cellar_path(tmp_path: Path) -> None:
+    project_dir = tmp_path / "Cellar" / "moonshine-flow" / "0.0.1-beta.8" / "libexec"
+    project_dir.mkdir(parents=True, exist_ok=True)
+
+    assert bootstrap._resolve_formula_version_from_project_dir(project_dir) == "0.0.1-beta.8"
+
+
+def test_resolve_fast_version_prefers_libexec_venv_metadata(tmp_path: Path, monkeypatch) -> None:
+    project_dir = tmp_path / "libexec"
+    (project_dir / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
+    python_path = project_dir / ".venv" / "bin" / "python"
+    python_path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    python_path.chmod(0o755)
+
+    class _Process:
+        returncode = 0
+        stdout = "0.0.1b8\n"
+
+    monkeypatch.setattr(bootstrap.subprocess, "run", lambda *args, **kwargs: _Process())
+
+    assert bootstrap._resolve_fast_version(project_dir) == "0.0.1b8"
+
+
+def test_main_short_version_query_skips_runtime_manager(tmp_path: Path, monkeypatch, capsys) -> None:
+    project_dir = tmp_path / "Cellar" / "moonshine-flow" / "0.0.3" / "libexec"
+    project_dir.mkdir(parents=True, exist_ok=True)
+
+    class _Process:
+        returncode = 0
+        stdout = "0.0.3\n"
+
+    monkeypatch.setattr(bootstrap.subprocess, "run", lambda *args, **kwargs: _Process())
+
+    def fail_runtime_manager(*args, **kwargs):
+        raise AssertionError("RuntimeManager should not be created for -v")
+
+    monkeypatch.setattr(bootstrap, "RuntimeManager", fail_runtime_manager)
+
+    exit_code = bootstrap.main(
+        [
+            "--libexec",
+            str(project_dir),
+            "--var-dir",
+            str(tmp_path / "var"),
+            "--python",
+            str(tmp_path / "python"),
+            "--uv",
+            str(tmp_path / "uv"),
+            "--",
+            "-v",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert captured.out.strip() == "moonshine-flow 0.0.3"
+
+
 def test_runtime_manager_launch_injects_project_src_into_pythonpath(
     tmp_path: Path,
     monkeypatch,

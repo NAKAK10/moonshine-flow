@@ -29,8 +29,8 @@ tap や Homebrew 環境起因でインストール失敗する場合は、次を
 ## コマンド一覧
 | コマンド | 説明 |
 | --- | --- |
-| `moonshine-flow -v` | バージョンを表示して終了します。 |
-| `moonshine-flow --version` | バージョンを表示して終了します。 |
+| `moonshine-flow -v` | パッケージバージョンを表示して終了します（ビルド時にリリースタグから確定）。 |
+| `moonshine-flow --version` | パッケージバージョンを表示して終了します（ビルド時にリリースタグから確定）。 |
 | `moonshine-flow run` | バックグラウンドデーモンを起動します。 |
 | `moonshine-flow doctor` | ランタイム診断と権限状態を表示します。 |
 | `moonshine-flow check-permissions` | macOS 権限の状態を確認します（プロンプトなし）。 |

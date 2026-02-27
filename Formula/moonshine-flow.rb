@@ -24,6 +24,7 @@ class MoonshineFlow < Formula
     uv = Formula["uv"].opt_bin/"uv"
     ENV["UV_PYTHON"] = python
     ENV["UV_PYTHON_DOWNLOADS"] = "never"
+    ENV["SETUPTOOLS_SCM_PRETEND_VERSION_FOR_MOONSHINE_FLOW"] = version.to_s unless build.head?
     system uv, "sync", "--project", libexec, "--frozen"
 
     (bin/"moonshine-flow").write <<~SH

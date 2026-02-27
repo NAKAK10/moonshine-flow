@@ -7,10 +7,10 @@ import logging
 import os
 import platform
 import sys
+from importlib.metadata import PackageNotFoundError, version as package_version
 from importlib.util import find_spec
 from pathlib import Path
 
-from moonshine_flow import __version__
 from moonshine_flow.config import default_config_path, load_config
 from moonshine_flow.launchd import install_launch_agent, launch_agent_path, uninstall_launch_agent
 from moonshine_flow.logging_setup import configure_logging
@@ -21,6 +21,13 @@ from moonshine_flow.permissions import (
 )
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _resolve_app_version() -> str:
+    try:
+        return package_version("moonshine-flow")
+    except PackageNotFoundError:
+        return "0.0.0.dev0"
 
 
 def _resolve_config_path(path_value: str | None) -> Path:
@@ -163,7 +170,7 @@ def build_parser() -> argparse.ArgumentParser:
         "-v",
         "--version",
         action="version",
-        version=f"%(prog)s {__version__}",
+        version=f"%(prog)s {_resolve_app_version()}",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 

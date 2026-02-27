@@ -29,8 +29,8 @@ Settings location: `System Settings -> Privacy & Security`
 ## Command Reference
 | Command | Description |
 | --- | --- |
-| `moonshine-flow -v` | Show version and exit. |
-| `moonshine-flow --version` | Show version and exit. |
+| `moonshine-flow -v` | Show package version and exit (release-tag based at build time). |
+| `moonshine-flow --version` | Show package version and exit (release-tag based at build time). |
 | `moonshine-flow run` | Run the background daemon. |
 | `moonshine-flow doctor` | Print runtime diagnostics and permission status. |
 | `moonshine-flow check-permissions` | Check required macOS permissions without prompting. |
