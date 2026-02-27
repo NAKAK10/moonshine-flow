@@ -329,10 +329,7 @@ class RuntimeManager:
     ) -> None:
         self._project_dir = project_dir
         self._state_dir = state_dir
-        self._host_arch = _normalize_arch(
-            host_arch
-            or (os.uname().machine if hasattr(os, "uname") else platform.machine())
-        )
+        self._host_arch = _normalize_arch(host_arch or _detect_host_arch())
         self._builder = builder or RuntimeBuilder(project_dir)
         self._state_store = state_store or RuntimeStateStore(state_dir)
         self._fingerprint = fingerprint or ProjectFingerprint(project_dir)
@@ -557,6 +554,22 @@ def _detect_python_arch(python_bin: Path, default_arch: str) -> str:
     if described != "unknown":
         return described
     return default_arch
+
+
+def _detect_host_arch() -> str:
+    detected = _normalize_arch(os.uname().machine if hasattr(os, "uname") else platform.machine())
+    if detected == "x86_64" and sys.platform == "darwin":
+        try:
+            arm64_capable = subprocess.check_output(
+                ["/usr/sbin/sysctl", "-n", "hw.optional.arm64"],
+                text=True,
+                stderr=subprocess.DEVNULL,
+            ).strip()
+        except (FileNotFoundError, subprocess.CalledProcessError, OSError):
+            arm64_capable = ""
+        if arm64_capable == "1":
+            return "arm64"
+    return detected
 
 
 def _discover_toolchains(*, python_bin: Path, uv_bin: Path, host_arch: str) -> list[Toolchain]:

@@ -121,6 +121,18 @@ def test_runtime_manager_uses_discovered_toolchains_when_none(
     assert manager._toolchains[0].arch == "arm64"
 
 
+def test_detect_host_arch_prefers_arm64_on_rosetta(monkeypatch) -> None:
+    monkeypatch.setattr(bootstrap.os, "uname", lambda: type("U", (), {"machine": "x86_64"})())
+    monkeypatch.setattr(bootstrap.sys, "platform", "darwin", raising=False)
+    monkeypatch.setattr(
+        bootstrap.subprocess,
+        "check_output",
+        lambda *args, **kwargs: "1\n",
+    )
+
+    assert bootstrap._detect_host_arch() == "arm64"
+
+
 def test_runtime_manager_falls_back_to_primary_when_toolchains_empty(tmp_path: Path) -> None:
     manager = RuntimeManager(
         project_dir=tmp_path / "libexec",
