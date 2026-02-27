@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import datetime
 import logging
 import os
 import platform
@@ -11,7 +12,12 @@ from importlib.metadata import PackageNotFoundError, version as package_version
 from importlib.util import find_spec
 from pathlib import Path
 
-from moonshine_flow.app_bundle import default_app_bundle_path, install_app_bundle_from_env
+from moonshine_flow.app_bundle import (
+    app_bundle_executable_path,
+    default_app_bundle_path,
+    get_app_bundle_codesign_info,
+    install_app_bundle_from_env,
+)
 from moonshine_flow.config import default_config_path, load_config
 from moonshine_flow.launchd import (
     LAUNCH_AGENT_LABEL,
@@ -324,6 +330,20 @@ def _derive_launchd_permission_target(launchd_payload: dict[str, object] | None)
 
 def _latest_launchd_runtime_warning(err_log_path: Path) -> str | None:
     """Return latest launchd runtime warning text from daemon stderr log when present."""
+    result = _latest_launchd_runtime_warning_with_timestamp(err_log_path)
+    if result is None:
+        return None
+    return result[0]
+
+
+def _latest_launchd_runtime_warning_with_timestamp(
+    err_log_path: Path,
+) -> tuple[str, str | None] | None:
+    """Return (warning_message, detected_timestamp) from daemon stderr log, or None.
+
+    *detected_timestamp* is the raw log line prefix of the first matching line,
+    or None when no timestamp could be extracted.
+    """
     if not err_log_path.exists():
         return None
     try:
@@ -339,11 +359,48 @@ def _latest_launchd_runtime_warning(err_log_path: Path) -> str | None:
             latest_start = idx
 
     recent = lines[latest_start:]
-    if any("This process is not trusted!" in line for line in recent):
-        return "pynput listener is not trusted in daemon runtime context"
-    if any("Missing macOS permissions detected:" in line for line in recent):
-        return "daemon runtime detected missing macOS permissions"
+
+    def _extract_timestamp(line: str) -> str | None:
+        """Return leading timestamp portion of a log line if recognisable."""
+        # Common format: "2026-02-27 10:00:00,100 ..."
+        parts = line.split(" ")
+        if len(parts) >= 2 and len(parts[0]) == 10 and parts[0].count("-") == 2:
+            return f"{parts[0]} {parts[1]}"
+        return None
+
+    for line in recent:
+        if "This process is not trusted!" in line:
+            return "pynput listener is not trusted in daemon runtime context", _extract_timestamp(
+                line
+            )
+    for line in recent:
+        if "Missing macOS permissions detected:" in line:
+            return "daemon runtime detected missing macOS permissions", _extract_timestamp(line)
     return None
+
+
+def _print_codesign_info(target_path: str) -> None:
+    """Print codesign metadata for the app bundle derived from *target_path*."""
+    # Determine the bundle path: if target is already an .app, use it directly;
+    # otherwise try the default MoonshineFlow.app and resolve the executable mtime.
+    candidate_bundle = default_app_bundle_path()
+    exec_path = app_bundle_executable_path(candidate_bundle)
+
+    if exec_path.exists():
+        try:
+            mtime = exec_path.stat().st_mtime
+            mtime_str = datetime.datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
+            print(f"App bundle executable mtime: {mtime_str} ({exec_path})")
+        except OSError:
+            pass
+
+    codesign_info = get_app_bundle_codesign_info(candidate_bundle)
+    if codesign_info:
+        for key in ("CDHash", "Identifier", "TeamIdentifier", "Signature Type"):
+            if key in codesign_info:
+                print(f"App bundle {key}: {codesign_info[key]}")
+    else:
+        print(f"App bundle codesign info: unavailable ({candidate_bundle})")
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
@@ -380,9 +437,13 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             print(f"Launchd permission target (recommended): {launchd_permission_target}")
     print(f"Daemon stdout log: {out_log_path}")
     print(f"Daemon stderr log: {err_log_path}")
-    runtime_warning = _latest_launchd_runtime_warning(err_log_path)
-    if runtime_warning:
-        print(f"Launchd runtime status: WARNING ({runtime_warning})")
+    runtime_warning_result = _latest_launchd_runtime_warning_with_timestamp(err_log_path)
+    runtime_warning: str | None = None
+    runtime_warning_timestamp: str | None = None
+    if runtime_warning_result is not None:
+        runtime_warning, runtime_warning_timestamp = runtime_warning_result
+        timestamp_suffix = f" at {runtime_warning_timestamp}" if runtime_warning_timestamp else ""
+        print(f"Launchd runtime status: WARNING ({runtime_warning}{timestamp_suffix})")
 
     for pkg in ("moonshine_voice", "sounddevice", "pynput"):
         print(f"Package {pkg}:", "FOUND" if find_spec(pkg) else "MISSING")
@@ -410,6 +471,11 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             print(f"Launchd check command: {_format_command(probe.command)}")
         else:
             print(f"Launchd check command: {_format_command(launchd_command)}")
+
+        # Show app bundle codesign info alongside the launchd permission check
+        if launchd_permission_target:
+            _print_codesign_info(launchd_permission_target)
+
         if probe.report is not None:
             launchd_report = probe.report
             print("Launchd permissions:", "OK" if launchd_report.all_granted else "INCOMPLETE")
@@ -435,15 +501,35 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             if probe.stderr:
                 print(f"Launchd check stderr: {probe.stderr}")
 
+    # Determine overall permissions status:
+    # - INCOMPLETE: any definitive permission missing
+    # - WARN: all checks pass but runtime log shows trust failure (TCC instability)
+    # - OK: everything is granted and no runtime warning
     effective_incomplete = not report.all_granted
     if launchd_report is not None:
         effective_incomplete = effective_incomplete or not launchd_report.all_granted
     if probe_error:
         effective_incomplete = True
-    if runtime_warning:
+
+    # WARN = launchd check reports OK, but runtime log shows "not trusted"
+    # This indicates TCC registered the permission but the signing identity may have drifted.
+    effective_warn = (
+        not effective_incomplete
+        and runtime_warning is not None
+        and launchd_report is not None
+        and launchd_report.all_granted
+    )
+    # When launchd check was not run, runtime_warning alone causes INCOMPLETE (existing behaviour)
+    if runtime_warning and not should_check_launchd:
         effective_incomplete = True
 
-    print("Permissions:", "OK" if not effective_incomplete else "INCOMPLETE")
+    if effective_incomplete:
+        print("Permissions: INCOMPLETE")
+    elif effective_warn:
+        print("Permissions: WARN (launchd check OK but runtime not trusted)")
+    else:
+        print("Permissions: OK")
+
     if not report.all_granted:
         print(format_permission_guidance(report))
     elif launchd_report is not None and not launchd_report.all_granted:
@@ -456,6 +542,14 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             print("Grant permissions for the launchd target shown above and restart the launch agent.")
     elif probe_error:
         print("Could not verify launchd permission state from launchctl output.")
+    elif effective_warn:
+        target = launchd_permission_target or str(recommended_permission_target())
+        print(
+            "Launchd check reports OK but runtime log shows trust failure. "
+            "This typically means the app bundle was re-signed and TCC lost the binding. "
+            "Re-grant Accessibility/Input Monitoring for this target and restart: "
+            f"{target}"
+        )
     elif runtime_warning:
         target = launchd_permission_target or str(recommended_permission_target())
         print(

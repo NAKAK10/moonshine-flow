@@ -7,9 +7,9 @@ from pathlib import Path
 from moonshine_flow import app_bundle
 
 
-def _write_executable(path: Path) -> None:
+def _write_executable(path: Path, content: bytes = b"#!/bin/sh\nexit 0\n") -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    path.write_bytes(content)
     path.chmod(0o755)
 
 
@@ -111,3 +111,63 @@ def test_resolve_real_python_binary_falls_back_when_python_app_missing(tmp_path:
 
     resolved = app_bundle._resolve_real_python_binary(launcher)
     assert resolved == launcher
+
+
+def _make_bundle_env(tmp_path: Path, monkeypatch, *, python_content: bytes = b"pythonbin-v1") -> Path:
+    """Set up env vars and file fixtures for install_app_bundle_from_env tests."""
+    bootstrap_script = tmp_path / "libexec" / "src" / "moonshine_flow" / "homebrew_bootstrap.py"
+    bootstrap_script.parent.mkdir(parents=True, exist_ok=True)
+    bootstrap_script.write_text("print('ok')\n", encoding="utf-8")
+    python_bin = tmp_path / "python3.11"
+    uv_bin = tmp_path / "uv"
+    _write_executable(python_bin, python_content)
+    _write_executable(uv_bin)
+
+    monkeypatch.setenv(app_bundle.ENV_BOOTSTRAP_SCRIPT, str(bootstrap_script))
+    monkeypatch.setenv(app_bundle.ENV_LIBEXEC, str(tmp_path / "libexec"))
+    monkeypatch.setenv(app_bundle.ENV_VAR_DIR, str(tmp_path / "var"))
+    monkeypatch.setenv(app_bundle.ENV_PYTHON, str(python_bin))
+    monkeypatch.setenv(app_bundle.ENV_UV, str(uv_bin))
+
+    return tmp_path / "Applications" / app_bundle.APP_BUNDLE_NAME
+
+
+def test_install_app_bundle_skips_resign_when_executable_unchanged(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """When source and dest executables are identical, _resign_app_bundle must not be called."""
+    destination = _make_bundle_env(tmp_path, monkeypatch)
+
+    resign_calls: list[Path] = []
+    monkeypatch.setattr(app_bundle, "_resign_app_bundle", lambda p: resign_calls.append(p))
+
+    # First install: executable does not exist yet, so it will copy + sign.
+    app_bundle.install_app_bundle_from_env(destination)
+    assert len(resign_calls) == 1, "expected one sign on first install"
+    resign_calls.clear()
+
+    # Second install with identical source: nothing should change → no re-sign.
+    app_bundle.install_app_bundle_from_env(destination)
+    assert resign_calls == [], "re-sign should be skipped when nothing changed"
+
+
+def test_install_app_bundle_resigns_when_executable_changed(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """When source binary differs from dest, _resign_app_bundle must be called."""
+    destination = _make_bundle_env(tmp_path, monkeypatch, python_content=b"pythonbin-v1")
+    python_bin = tmp_path / "python3.11"
+
+    resign_calls: list[Path] = []
+    monkeypatch.setattr(app_bundle, "_resign_app_bundle", lambda p: resign_calls.append(p))
+
+    # First install.
+    app_bundle.install_app_bundle_from_env(destination)
+    resign_calls.clear()
+
+    # Replace source binary with different content.
+    _write_executable(python_bin, b"pythonbin-v2")
+
+    # Second install: executable changed → should re-sign.
+    app_bundle.install_app_bundle_from_env(destination)
+    assert len(resign_calls) == 1, "re-sign should run after executable update"

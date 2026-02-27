@@ -876,3 +876,128 @@ def test_resolve_app_version_fallback_when_metadata_missing() -> None:
         assert cli._resolve_app_version() == "0.0.0.dev0"
     finally:
         monkeypatch.undo()
+
+
+def _make_doctor_monkeypatches(monkeypatch, *, out_log: Path, err_log: Path) -> None:
+    """Apply common monkeypatches for cmd_doctor tests."""
+    from types import ModuleType, SimpleNamespace
+
+    fake_transcriber_mod = ModuleType("moonshine_flow.transcriber")
+
+    class FakeTranscriber:
+        def __init__(self, model_size: str, language: str, device: str) -> None:
+            self._summary = f"{model_size}:{language}:{device}"
+
+        def backend_summary(self) -> str:
+            return self._summary
+
+    fake_transcriber_mod.MoonshineTranscriber = FakeTranscriber
+    monkeypatch.setitem(sys.modules, "moonshine_flow.transcriber", fake_transcriber_mod)
+    monkeypatch.setattr(cli, "_resolve_config_path", lambda _: Path("/tmp/config.toml"))
+    monkeypatch.setattr(
+        cli,
+        "load_config",
+        lambda _: SimpleNamespace(
+            model=SimpleNamespace(size=SimpleNamespace(value="base"), language="ja", device="mps")
+        ),
+    )
+    monkeypatch.setattr(cli, "find_spec", lambda _: object())
+    monkeypatch.setattr(
+        cli,
+        "check_all_permissions",
+        lambda: PermissionReport(microphone=True, accessibility=True, input_monitoring=True),
+    )
+    monkeypatch.setattr(
+        cli,
+        "read_launch_agent_plist",
+        lambda: {
+            "Label": "com.moonshineflow.daemon",
+            "ProgramArguments": ["/usr/local/bin/mflow", "run", "--config", "/tmp/config.toml"],
+        },
+    )
+    monkeypatch.setattr(cli, "launch_agent_path", lambda: Path("/tmp/com.moonshineflow.daemon.plist"))
+    monkeypatch.setattr(cli, "launch_agent_log_paths", lambda: (out_log, err_log))
+    monkeypatch.setattr(cli, "recommended_permission_target", lambda: Path("/tmp/target.app"))
+
+
+def test_cmd_doctor_shows_warn_when_launchd_check_ok_but_runtime_not_trusted(
+    monkeypatch,
+    capsys,
+    tmp_path: Path,
+) -> None:
+    """WARN state: launchd check says all OK, but daemon log shows 'not trusted'."""
+    out_log = tmp_path / "daemon.out.log"
+    err_log = tmp_path / "daemon.err.log"
+    err_log.write_text(
+        "\n".join(
+            [
+                "2026-02-27 10:00:00,000 INFO [moonshine_flow.daemon] Moonshine Flow daemon starting",
+                "2026-02-27 10:00:00,100 WARNING [pynput.keyboard.Listener] This process is not trusted!",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    _make_doctor_monkeypatches(monkeypatch, out_log=out_log, err_log=err_log)
+
+    monkeypatch.setattr(
+        cli,
+        "check_permissions_in_launchd_context",
+        lambda **_: LaunchdPermissionProbe(
+            ok=True,
+            command=["/usr/local/bin/mflow", "check-permissions"],
+            report=PermissionReport(microphone=True, accessibility=True, input_monitoring=True),
+        ),
+    )
+    # Suppress codesign subprocess call (no real .app in test env)
+    monkeypatch.setattr(cli, "get_app_bundle_codesign_info", lambda _: None)
+    monkeypatch.setattr(cli, "app_bundle_executable_path", lambda _: Path("/nonexistent/exec"))
+
+    exit_code = cli.cmd_doctor(argparse.Namespace(config=None, launchd_check=True))
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "Launchd runtime status: WARNING" in captured.out
+    assert "Launchd permissions: OK" in captured.out
+    assert "Permissions: WARN (launchd check OK but runtime not trusted)" in captured.out
+    assert "TCC lost the binding" in captured.out
+
+
+def test_cmd_doctor_launchd_check_shows_codesign_info(
+    monkeypatch,
+    capsys,
+    tmp_path: Path,
+) -> None:
+    """--launchd-check prints CDHash and mtime from get_app_bundle_codesign_info."""
+    out_log = tmp_path / "daemon.out.log"
+    err_log = tmp_path / "daemon.err.log"
+    # No runtime warning in this test
+    _make_doctor_monkeypatches(monkeypatch, out_log=out_log, err_log=err_log)
+
+    monkeypatch.setattr(
+        cli,
+        "check_permissions_in_launchd_context",
+        lambda **_: LaunchdPermissionProbe(
+            ok=True,
+            command=["/usr/local/bin/mflow", "check-permissions"],
+            report=PermissionReport(microphone=True, accessibility=True, input_monitoring=True),
+        ),
+    )
+    # Fake codesign info
+    monkeypatch.setattr(
+        cli,
+        "get_app_bundle_codesign_info",
+        lambda _: {"CDHash": "abc123def456", "Identifier": "com.moonshineflow.app"},
+    )
+    # Fake exec path that exists in tmp_path
+    fake_exec = tmp_path / "MoonshineFlow"
+    fake_exec.write_bytes(b"fake")
+    monkeypatch.setattr(cli, "app_bundle_executable_path", lambda _: fake_exec)
+    monkeypatch.setattr(cli, "default_app_bundle_path", lambda: tmp_path / "MoonshineFlow.app")
+
+    exit_code = cli.cmd_doctor(argparse.Namespace(config=None, launchd_check=True))
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "App bundle CDHash: abc123def456" in captured.out
+    assert "App bundle Identifier: com.moonshineflow.app" in captured.out
+    assert "App bundle executable mtime:" in captured.out

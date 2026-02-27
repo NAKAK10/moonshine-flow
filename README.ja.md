@@ -139,6 +139,7 @@ moonshine-flow uninstall-launch-agent
 - `install-launch-agent` は既定で不足権限の許可を要求します。
 - `install-launch-agent` は launchd が実行するのと同じ実行対象で権限確認を行います。
 - `install-launch-agent` は既定で `~/Applications/MoonshineFlow.app` を作成/更新し、launchd の実行コマンドにその実行ファイルを優先して設定します。
+- **app bundle 差分更新**: `install-launch-agent`（および `install-app-bundle`）は、実行バイナリ・`Info.plist`・`bootstrap.json` のいずれかが変更された場合のみ上書きおよび再署名を行います。これにより CDHash が不必要に変わることを防ぎ、macOS TCC の権限バインディングが失われるのを回避します。
 - 必須権限が不足している場合、長押しや貼り付けが不安定になるのを防ぐため、既定ではインストールを中断します。
 - 意図的に継続したい場合だけ `--allow-missing-permissions` を使ってください。
 - runtime 自動修復ログは成功時は最小表示です。`uv sync` の詳細が必要なときだけ `--verbose-bootstrap` を指定してください。
@@ -147,6 +148,41 @@ moonshine-flow uninstall-launch-agent
 - LaunchAgent は `~/Applications/MoonshineFlow.app/Contents/MacOS/MoonshineFlow` を起動し、bootstrap はその同一プロセス識別を維持したまま runtime 依存を読み込みます。
 - 権限はコマンド名ではなく、実行ファイルの実体パス（および署名）単位で管理されます。launchd では `doctor` が示す推奨ターゲットを許可してください。
 - Input Monitoring に `MoonshineFlow` が出ない場合は `moonshine-flow install-launch-agent --request-permissions` を再実行し、`moonshine-flow doctor --launchd-check` で確認してください。
+
+## トラブルシューティング
+
+### `doctor` の権限状態
+
+| 状態 | 意味 |
+| --- | --- |
+| `Permissions: OK` | 全権限が許可済みで、ランタイム警告なし。 |
+| `Permissions: WARN` | `--launchd-check` では全権限 OK だが、デーモンログに `pynput ... This process is not trusted!` が記録されている。app bundle が再署名され（CDHash 変化）、macOS TCC の権限バインディングが失われた可能性があります。 |
+| `Permissions: INCOMPLETE` | 1つ以上の権限が未許可。System Settings で許可してください。 |
+
+### `Permissions: WARN` — TCC 権限バインディングの喪失
+
+`mflow doctor --launchd-check` で `Permissions: WARN (launchd check OK but runtime not trusted)` が表示された場合:
+
+1. 現在の実行ファイルと CDHash を確認する:
+```bash
+mflow doctor --launchd-check
+```
+出力中の `App bundle CDHash` と `App bundle executable mtime` を確認してください。
+
+2. `System Settings -> Privacy & Security` で、表示されているターゲット（`~/Applications/MoonshineFlow.app/Contents/MacOS/MoonshineFlow`）に対して Accessibility と Input Monitoring を再許可する。
+
+3. launch-agent を再起動する:
+```bash
+mflow restart-launch-agent
+```
+
+4. 警告が消えたことを確認する:
+```bash
+mflow doctor --launchd-check
+```
+期待値: `Permissions: OK`
+
+**原因**: macOS TCC は権限をコード署名（CDHash）と紐付けて管理します。`brew upgrade moonshine-flow` で Python runtime が更新されると、`install-app-bundle` は差分チェックを行い、バイナリが変化した場合のみ再署名します。その際 CDHash が変わり、古い TCC レコードが一致しなくなります。差分更新により不要な再署名は最小化されていますが、Python バイナリ自体が変わった場合は再許可が必要です。
 
 ## 設定ファイル
 デフォルト: `~/.config/moonshine-flow/config.toml`  

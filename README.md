@@ -139,6 +139,7 @@ Notes:
 - `install-launch-agent` requests missing permissions by default.
 - `install-launch-agent` checks permissions using the same executable target that launchd will run.
 - `install-launch-agent` creates/updates `~/Applications/MoonshineFlow.app` by default and prefers that executable for launchd command wiring.
+- **App bundle diff-update**: `install-launch-agent` (and `install-app-bundle`) only overwrites and re-signs the bundle when the executable binary, `Info.plist`, or `bootstrap.json` actually changes. This keeps the code signature (CDHash) stable across upgrades and prevents macOS TCC from losing the permission binding.
 - If required permissions remain missing, installation is aborted by default to avoid "hotkey works poorly / paste does not happen" states.
 - Use `--allow-missing-permissions` only when you intentionally want to install anyway.
 - Runtime auto-recovery output is quiet on success; use `--verbose-bootstrap` when you need full `uv sync` logs.
@@ -147,6 +148,42 @@ Notes:
 - LaunchAgent starts `~/Applications/MoonshineFlow.app/Contents/MacOS/MoonshineFlow`, and bootstrap keeps that process identity while loading runtime dependencies.
 - Permissions are tied to executable path (and code signature), not command alias. For launchd use the recommended target shown by `doctor`.
 - If `MoonshineFlow` does not appear under Input Monitoring, rerun `moonshine-flow install-launch-agent --request-permissions` and then `moonshine-flow doctor --launchd-check`.
+
+## Troubleshooting
+
+### `doctor` permission states
+
+| State | Meaning |
+| --- | --- |
+| `Permissions: OK` | All permissions granted, no runtime warning. |
+| `Permissions: WARN` | `--launchd-check` reports all permissions granted, but the daemon log shows `pynput ... This process is not trusted!`. The app bundle was likely re-signed (CDHash changed) and macOS TCC lost the permission binding. |
+| `Permissions: INCOMPLETE` | One or more permissions are missing. Grant them in System Settings. |
+
+### `Permissions: WARN` — TCC permission binding lost
+
+When `mflow doctor --launchd-check` shows `Permissions: WARN (launchd check OK but runtime not trusted)`:
+
+1. Check which executable and CDHash are registered:
+```bash
+mflow doctor --launchd-check
+```
+Look for `App bundle CDHash` and `App bundle executable mtime` in the output.
+
+2. Re-grant Accessibility and Input Monitoring in  
+   `System Settings -> Privacy & Security` for the listed target (`~/Applications/MoonshineFlow.app/Contents/MacOS/MoonshineFlow`).
+
+3. Restart the launch agent:
+```bash
+mflow restart-launch-agent
+```
+
+4. Confirm no further warning:
+```bash
+mflow doctor --launchd-check
+```
+Expected: `Permissions: OK`
+
+**Why this happens**: macOS TCC ties permissions to the code signature (CDHash). When `brew upgrade moonshine-flow` replaces the Python runtime, `install-app-bundle` performs a diff-check: if the binary changes it re-signs with a new CDHash, and the old TCC record no longer matches. The diff-update behaviour minimises unnecessary re-signing, but when the underlying Python binary genuinely changes a re-grant is required.
 
 ## Config file
 Default: `~/.config/moonshine-flow/config.toml`  
