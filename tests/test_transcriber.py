@@ -33,6 +33,20 @@ def test_stringify_transcript_handles_lines() -> None:
     assert MoonshineTranscriber._stringify_transcript(transcript) == "hi there"
 
 
+def test_stringify_transcript_removes_spaces_between_japanese_chars() -> None:
+    transcript = SimpleNamespace(
+        lines=[SimpleNamespace(text=" そ う い う よ う "), SimpleNamespace(text=" 僕 ら は? ")]
+    )
+    assert MoonshineTranscriber._stringify_transcript(transcript) == "そういうよう僕らは?"
+
+
+def test_stringify_transcript_keeps_spaces_for_non_japanese_text() -> None:
+    transcript = SimpleNamespace(
+        lines=[SimpleNamespace(text=" version 2 "), SimpleNamespace(text="A B"), SimpleNamespace(text="今日は 2026 年")]
+    )
+    assert MoonshineTranscriber._stringify_transcript(transcript) == "version 2 A B 今日は 2026 年"
+
+
 def test_preflight_model_downloads_and_initializes(monkeypatch) -> None:
     calls: dict[str, object] = {}
 
