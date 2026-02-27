@@ -266,6 +266,7 @@ class RuntimeBuilder:
         )
 
     def _validate_project_layout(self) -> None:
+        self._restore_readme_if_needed()
         missing = [
             name for name in self._REQUIRED_PROJECT_FILES if not (self._project_dir / name).is_file()
         ]
@@ -278,6 +279,24 @@ class RuntimeBuilder:
             f"missing {missing_text} under {self._project_dir}. "
             "Try: brew reinstall moonshine-flow"
         )
+
+    def _restore_readme_if_needed(self) -> None:
+        readme_path = self._project_dir / "README.md"
+        if readme_path.is_file():
+            return
+
+        # Homebrew may relocate README.md to the formula prefix as a metafile.
+        prefix_readme = self._project_dir.parent / "README.md"
+        if not prefix_readme.is_file():
+            return
+
+        try:
+            shutil.copyfile(prefix_readme, readme_path)
+        except OSError as exc:
+            raise RuntimeRepairError(
+                "Failed to restore README.md into runtime project layout: "
+                f"{exc}"
+            ) from exc
 
     def _run(self, command: Sequence[str], env: dict[str, str] | None = None) -> None:
         try:

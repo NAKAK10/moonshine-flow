@@ -292,6 +292,34 @@ def test_runtime_builder_requires_metadata_files(tmp_path: Path) -> None:
         builder.rebuild(runtime)
 
 
+def test_runtime_builder_restores_readme_from_prefix(tmp_path: Path, monkeypatch) -> None:
+    project_dir = tmp_path / "opt" / "moonshine-flow" / "libexec"
+    _write_project_files(project_dir)
+    (project_dir / "README.md").unlink()
+    (project_dir.parent / "README.md").write_text("# moonshine-flow\n", encoding="utf-8")
+
+    builder = RuntimeBuilder(project_dir)
+    commands: list[tuple[list[str], dict[str, str] | None]] = []
+
+    def fake_run(command, env=None) -> None:
+        commands.append((list(command), env))
+
+    monkeypatch.setattr(builder, "_run", fake_run)
+
+    runtime = RuntimeCandidate(
+        name="recovery-arm64",
+        venv_dir=tmp_path / "var" / ".venv-arm64",
+        toolchain=Toolchain("primary", tmp_path / "python3.11", tmp_path / "uv", "arm64"),
+        scope="arm64",
+    )
+
+    builder.rebuild(runtime)
+
+    assert (project_dir / "README.md").is_file()
+    assert (project_dir / "README.md").read_text(encoding="utf-8") == "# moonshine-flow\n"
+    assert len(commands) == 2
+
+
 def test_runtime_builder_rebuild_runs_when_metadata_present(tmp_path: Path, monkeypatch) -> None:
     project_dir = tmp_path / "libexec"
     _write_project_files(project_dir)

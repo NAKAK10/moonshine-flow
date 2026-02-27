@@ -3,9 +3,9 @@ class MoonshineFlow < Formula
   homepage "https://github.com/NAKAK10/moonshine-flow"
   # stable-release: updated by GitHub Actions on release publish.
   # stable-release-start
-  url "https://github.com/NAKAK10/moonshine-flow/archive/refs/tags/v0.0.1-beta.9.tar.gz"
-  sha256 "c58107b77d0684c0c8743634523d13a8aa200bc8d3a4c9b876ea09873465c5d3"
-  version "0.0.1-beta.9"
+  url "https://github.com/NAKAK10/moonshine-flow/archive/refs/tags/v0.0.1-beta.10.tar.gz"
+  sha256 "45a2c36ceb32f760ac3646ba8e45fa7d21d6db4addb364ffae157fd4a6e19bbc"
+  version "0.0.1-beta.10"
   # stable-release-end
   head "https://github.com/NAKAK10/moonshine-flow.git", branch: "main"
   preserve_rpath
@@ -41,7 +41,7 @@ class MoonshineFlow < Formula
 
   test do
     assert_match "moonshine-flow", shell_output("#{bin}/moonshine-flow --help")
-    assert_predicate opt_libexec/"README.md", :exist?
+    assert_predicate opt_prefix/"README.md", :exist?
     probe = shell_output(
       <<~EOS
         #{opt_libexec}/.venv/bin/python -c "import ctypes; import moonshine_voice; from pathlib import Path; lib = Path(moonshine_voice.__file__).resolve().with_name('libmoonshine.dylib'); ctypes.CDLL(str(lib)); print('moonshine-runtime-ok')"
