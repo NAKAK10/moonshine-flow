@@ -2,6 +2,7 @@
 
 macOS向けの Push-to-talk 文字起こしデーモンです。  
 グローバルホットキーを押している間だけ録音し、離したら Moonshine で文字起こししてアクティブアプリへ貼り付けます。
+音声認識には公式リポジトリの Moonshine を利用しています: https://github.com/moonshine-ai/moonshine
 
 [English](./README.md)
 

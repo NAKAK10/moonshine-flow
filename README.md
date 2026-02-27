@@ -2,6 +2,7 @@
 
 A push-to-talk transcription daemon for macOS.  
 It records only while a global hotkey is held, and when released it transcribes with Moonshine and pastes into the active app.
+It uses Moonshine from the official repository: https://github.com/moonshine-ai/moonshine
 
 [日本語](./README.ja.md)
 
