@@ -41,17 +41,8 @@ tap や Homebrew 環境起因でインストール失敗する場合は、次を
 | `moonshine-flow install-launch-agent --no-request-permissions` | 権限要求プロンプトを出さず、現在の権限状態だけ確認します。 |
 | `moonshine-flow install-launch-agent --verbose-bootstrap` | インストール中の runtime 自動修復ログを詳細表示します。 |
 | `moonshine-flow uninstall-launch-agent` | launchd エージェントを削除します。 |
-| `mflow -v` | パッケージバージョンを表示して終了します（`moonshine-flow -v` と同じ）。 |
-| `mflow --version` | パッケージバージョンを表示して終了します（`moonshine-flow --version` と同じ）。 |
-| `mflow run` | バックグラウンドデーモンを起動します（`moonshine-flow run` と同じ）。 |
-| `mflow doctor` | ランタイム診断と権限状態を表示します（`moonshine-flow doctor` と同じ）。 |
-| `mflow check-permissions` | macOS 権限の状態を確認します（`moonshine-flow check-permissions` と同じ）。 |
-| `mflow check-permissions --request` | 不足権限の許可を要求します（`moonshine-flow check-permissions --request` と同じ）。 |
-| `mflow install-launch-agent` | launchd エージェントをインストールします（`moonshine-flow install-launch-agent` と同じ）。 |
-| `mflow install-launch-agent --allow-missing-permissions` | 権限不足でもインストールします（`moonshine-flow ... --allow-missing-permissions` と同じ）。 |
-| `mflow install-launch-agent --no-request-permissions` | 権限要求をスキップします（`moonshine-flow ... --no-request-permissions` と同じ）。 |
-| `mflow install-launch-agent --verbose-bootstrap` | runtime 自動修復ログを詳細表示します（`moonshine-flow ... --verbose-bootstrap` と同じ）。 |
-| `mflow uninstall-launch-agent` | launchd エージェントを削除します（`moonshine-flow uninstall-launch-agent` と同じ）。 |
+
+上記コマンドはすべて `mflow` エイリアスでも同様に使えます。
 
 ## できること
 - グローバルキー監視で録音トリガー
@@ -115,28 +106,6 @@ moonshine-flow uninstall-launch-agent
 - `model.size`: `base` / `tiny`
 - `model.language`: `auto` / `ja` / `en` など
 - `model.device`: `mps` / `cpu`
-
-## トラブルシュート
-- `bad interpreter` が出る: `moonshine-flow --help` を再実行して自己修復を待つ。解消しない場合は `brew reinstall moonshine-flow`。
-- 最新タグより `brew` の stable が古い:
-  1. `brew update-reset && brew update`
-  2. `brew info moonshine-flow` で `stable` バージョンを確認
-  3. まだ古い場合は tap Formula を確認: `brew cat moonshine-flow | sed -n '1,20p'`
-  4. 暫定回避として `brew install --HEAD moonshine-flow` を使用
-- `incompatible architecture` が出る:
-  1. `moonshine-flow doctor` で `OS machine` / `Python machine` を確認。
-  2. Apple Silicon なら arm64 toolchain を用意（例: `/opt/homebrew/bin/brew install python@3.11 uv`）。
-  3. `brew reinstall moonshine-flow` 後に再実行。
-- デーモンログの場所が分からない:
-  1. `moonshine-flow doctor` を実行。
-  2. `LaunchAgent plist` / `LaunchAgent program` / `Daemon stdout log` / `Daemon stderr log` を確認。
-- 設定画面で `mflow` を ON にしてもホットキーが効かない:
-  1. `moonshine-flow doctor` を実行。
-  2. `Permission target (recommended)` に表示されたパスを、Privacy 設定で正確に許可。
-  3. `launchctl kickstart -k gui/$(id -u)/com.moonshineflow.daemon` で再起動。
-- 貼り付けできない: Accessibility 許可を確認。
-- ホットキーが反応しない: Input Monitoring 許可を確認。
-- 録音できない: Microphone 許可を確認。
 
 ## 開発参加（最小）
 前提:

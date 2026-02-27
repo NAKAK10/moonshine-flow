@@ -41,17 +41,8 @@ Settings location: `System Settings -> Privacy & Security`
 | `moonshine-flow install-launch-agent --no-request-permissions` | Skip permission prompt attempts and only check current permission state. |
 | `moonshine-flow install-launch-agent --verbose-bootstrap` | Show detailed runtime recovery logs during launch-agent installation. |
 | `moonshine-flow uninstall-launch-agent` | Remove the launchd agent. |
-| `mflow -v` | Show package version and exit (same as `moonshine-flow -v`). |
-| `mflow --version` | Show package version and exit (same as `moonshine-flow --version`). |
-| `mflow run` | Run the background daemon (same as `moonshine-flow run`). |
-| `mflow doctor` | Print runtime diagnostics and permission status (same as `moonshine-flow doctor`). |
-| `mflow check-permissions` | Check required macOS permissions without prompting (same as `moonshine-flow check-permissions`). |
-| `mflow check-permissions --request` | Prompt for missing permissions where possible (same as `moonshine-flow check-permissions --request`). |
-| `mflow install-launch-agent` | Install the launchd agent for auto-start at login (same as `moonshine-flow install-launch-agent`). |
-| `mflow install-launch-agent --allow-missing-permissions` | Install even if required permissions are missing (same as `moonshine-flow ... --allow-missing-permissions`). |
-| `mflow install-launch-agent --no-request-permissions` | Skip permission prompt attempts (same as `moonshine-flow ... --no-request-permissions`). |
-| `mflow install-launch-agent --verbose-bootstrap` | Show detailed runtime recovery logs (same as `moonshine-flow ... --verbose-bootstrap`). |
-| `mflow uninstall-launch-agent` | Remove the launchd agent (same as `moonshine-flow uninstall-launch-agent`). |
+
+All commands above are also available via the `mflow` alias.
 
 ## Features
 - Recording trigger via global key monitor
@@ -115,28 +106,6 @@ Main settings:
 - `model.size`: `base` / `tiny`
 - `model.language`: `auto` / `ja` / `en` / etc.
 - `model.device`: `mps` / `cpu`
-
-## Troubleshooting
-- `bad interpreter`: rerun `moonshine-flow --help` and wait for auto-repair. If it still fails, run `brew reinstall moonshine-flow`.
-- Homebrew `stable` is older than the latest tag:
-  1. `brew update-reset && brew update`
-  2. Check `stable` with `brew info moonshine-flow`
-  3. If still old, inspect the tap formula: `brew cat moonshine-flow | sed -n '1,20p'`
-  4. Temporary workaround: `brew install --HEAD moonshine-flow`
-- `incompatible architecture` appears:
-  1. Check `OS machine` and `Python machine` with `moonshine-flow doctor`.
-  2. On Apple Silicon, prepare arm64 toolchain (example: `/opt/homebrew/bin/brew install python@3.11 uv`).
-  3. Reinstall and retry: `brew reinstall moonshine-flow`.
-- Not sure where daemon logs are:
-  1. Run `moonshine-flow doctor`.
-  2. Check `LaunchAgent plist`, `LaunchAgent program`, `Daemon stdout log`, and `Daemon stderr log`.
-- `mflow` is enabled in Settings but hotkey still does not work:
-  1. Run `moonshine-flow doctor`.
-  2. In macOS privacy settings, enable the exact path shown as `Permission target (recommended)`.
-  3. Restart the agent: `launchctl kickstart -k gui/$(id -u)/com.moonshineflow.daemon`.
-- Cannot paste: verify Accessibility permission.
-- Hotkey not detected: verify Input Monitoring permission.
-- Cannot record: verify Microphone permission.
 
 ## Development (minimal)
 Prerequisites:
