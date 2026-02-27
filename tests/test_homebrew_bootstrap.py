@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import moonshine_flow.homebrew_bootstrap as bootstrap
@@ -568,34 +569,40 @@ def test_runtime_manager_launch_injects_project_src_into_pythonpath(
         toolchain=Toolchain("primary", tmp_path / "python3.11", tmp_path / "uv", "arm64"),
         scope="arm64",
     )
+    runtime_site = runtime.venv_dir / "lib" / "python3.11" / "site-packages"
+    runtime_site.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(manager, "resolve_runtime", lambda: runtime)
+    monkeypatch.setattr(bootstrap.platform, "machine", lambda: "arm64")
 
     captured: dict[str, object] = {}
 
-    def fake_execve(path: str, args: list[str], env: dict[str, str]) -> None:
-        captured["path"] = path
-        captured["args"] = args
-        captured["env"] = env
-        raise RuntimeError("exec-called")
+    def fake_run_cli(cli_args, env_updates, injected_paths) -> int:
+        captured["args"] = list(cli_args)
+        captured["env"] = dict(env_updates)
+        captured["paths"] = list(injected_paths)
+        return 7
 
-    monkeypatch.setattr(bootstrap.os, "execve", fake_execve)
+    monkeypatch.setattr(
+        manager,
+        "_run_cli_in_current_process",
+        staticmethod(fake_run_cli),
+    )
 
-    with pytest.raises(RuntimeError, match="exec-called"):
-        manager.launch(["--help"])
+    exit_code = manager.launch(["--help"])
 
-    assert captured["path"] == str(runtime.python_path)
-    assert captured["args"] == [
-        str(runtime.python_path),
-        "-m",
-        "moonshine_flow.cli",
-        "--help",
-    ]
+    assert exit_code == 7
+    assert captured["args"] == ["--help"]
+    assert captured["paths"] == [str(project_dir / "src"), str(runtime_site)]
     env = captured["env"]
     assert isinstance(env, dict)
-    assert env["PYTHONPATH"] == str(project_dir / "src")
+    assert env["MOONSHINE_FLOW_LIBEXEC"] == str(project_dir)
+    assert env["MOONSHINE_FLOW_VAR_DIR"] == str(state_dir)
+    assert env["MOONSHINE_FLOW_PYTHON"] == str(tmp_path / "python3.11")
+    assert env["MOONSHINE_FLOW_UV"] == str(tmp_path / "uv")
+    assert env["PYTHONPATH"] == os.pathsep.join([str(project_dir / "src"), str(runtime_site)])
 
 
-def test_runtime_manager_launch_uses_dedicated_daemon_executable(
+def test_runtime_manager_launch_execs_runtime_python_on_arch_mismatch(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -619,8 +626,10 @@ def test_runtime_manager_launch_uses_dedicated_daemon_executable(
         toolchain=Toolchain("primary", tmp_path / "python3.11", tmp_path / "uv", "arm64"),
         scope="arm64",
     )
-    _write_executable(runtime.python_path)
+    runtime_site = runtime.venv_dir / "lib" / "python3.11" / "site-packages"
+    runtime_site.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(manager, "resolve_runtime", lambda: runtime)
+    monkeypatch.setattr(bootstrap.platform, "machine", lambda: "x86_64")
 
     captured: dict[str, object] = {}
 
@@ -635,17 +644,12 @@ def test_runtime_manager_launch_uses_dedicated_daemon_executable(
     with pytest.raises(RuntimeError, match="exec-called"):
         manager.launch(["run"])
 
-    daemon_exec = runtime.daemon_python_path
-    assert daemon_exec.exists()
-    assert captured["path"] == str(daemon_exec)
-    assert captured["args"] == [
-        str(daemon_exec),
-        "-m",
-        "moonshine_flow.cli",
-        "run",
-    ]
+    assert captured["path"] == str(runtime.python_path)
+    assert captured["args"] == [str(runtime.python_path), "-m", "moonshine_flow.cli", "run"]
     env = captured["env"]
     assert isinstance(env, dict)
     assert env["MOONSHINE_FLOW_LIBEXEC"] == str(project_dir)
     assert env["MOONSHINE_FLOW_VAR_DIR"] == str(state_dir)
-    assert env["MOONSHINE_FLOW_DAEMON_PYTHON"] == str(daemon_exec)
+    assert env["MOONSHINE_FLOW_PYTHON"] == str(tmp_path / "python3.11")
+    assert env["MOONSHINE_FLOW_UV"] == str(tmp_path / "uv")
+    assert env["PYTHONPATH"] == os.pathsep.join([str(project_dir / "src"), str(runtime_site)])

@@ -107,3 +107,23 @@ def uninstall_launch_agent() -> bool:
     _launchctl("bootout", f"gui/{uid}", str(plist_path))
     plist_path.unlink(missing_ok=True)
     return True
+
+
+def restart_launch_agent() -> bool:
+    """Restart installed launchd agent after permission changes."""
+    plist_path = launch_agent_path()
+    if not plist_path.exists():
+        return False
+
+    uid = str(subprocess.check_output(["id", "-u"], text=True).strip())
+    service = f"gui/{uid}/{LAUNCH_AGENT_LABEL}"
+    kick = _launchctl("kickstart", "-k", service)
+    if kick.returncode == 0:
+        return True
+
+    _launchctl("bootout", f"gui/{uid}", str(plist_path))
+    boot = _launchctl("bootstrap", f"gui/{uid}", str(plist_path))
+    if boot.returncode != 0:
+        detail = kick.stderr.strip() or boot.stderr.strip()
+        raise RuntimeError(f"launchctl restart failed: {detail}")
+    return True

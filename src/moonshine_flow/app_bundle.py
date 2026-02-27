@@ -18,7 +18,6 @@ ENV_LIBEXEC = "MOONSHINE_FLOW_LIBEXEC"
 ENV_VAR_DIR = "MOONSHINE_FLOW_VAR_DIR"
 ENV_PYTHON = "MOONSHINE_FLOW_PYTHON"
 ENV_UV = "MOONSHINE_FLOW_UV"
-ENV_DAEMON_PYTHON = "MOONSHINE_FLOW_DAEMON_PYTHON"
 
 _REQUIRED_ENV_KEYS = (
     ENV_BOOTSTRAP_SCRIPT,
@@ -77,7 +76,7 @@ def install_app_bundle_from_env(app_bundle_path: Path | None = None) -> Path | N
     if values is None:
         return None
 
-    source_python = Path(os.environ.get(ENV_DAEMON_PYTHON, values[ENV_PYTHON])).expanduser()
+    source_python = _resolve_real_python_binary(Path(values[ENV_PYTHON]).expanduser())
     if not source_python.exists():
         return None
 
@@ -111,6 +110,35 @@ def install_app_bundle_from_env(app_bundle_path: Path | None = None) -> Path | N
     metadata_path.write_text(json.dumps(values, indent=2) + "\n", encoding="utf-8")
     _resign_app_bundle(bundle_path)
     return bundle_path
+
+
+def _resolve_real_python_binary(executable: Path) -> Path:
+    resolved = executable.resolve(strict=False)
+    marker = "/Frameworks/Python.framework/Versions/"
+    text = str(resolved)
+    if marker not in text:
+        return resolved
+
+    prefix, suffix = text.split(marker, 1)
+    version = suffix.split("/", 1)[0].strip()
+    if not version:
+        return resolved
+
+    candidate = (
+        Path(prefix)
+        / "Frameworks"
+        / "Python.framework"
+        / "Versions"
+        / version
+        / "Resources"
+        / "Python.app"
+        / "Contents"
+        / "MacOS"
+        / "Python"
+    )
+    if candidate.exists():
+        return candidate
+    return resolved
 
 
 def resolve_launch_agent_app_command() -> list[str] | None:

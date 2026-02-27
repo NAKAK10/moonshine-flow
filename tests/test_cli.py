@@ -176,6 +176,12 @@ def test_install_launch_agent_parser_allows_no_install_app_bundle() -> None:
     assert args.install_app_bundle is False
 
 
+def test_restart_launch_agent_parser() -> None:
+    parser = cli.build_parser()
+    args = parser.parse_args(["restart-launch-agent"])
+    assert args.command == "restart-launch-agent"
+
+
 def test_cmd_install_launch_agent_aborts_when_permissions_missing(monkeypatch, capsys) -> None:
     monkeypatch.setattr(cli, "_resolve_config_path", lambda _: Path("/tmp/config.toml"))
     monkeypatch.setattr(cli, "load_config", lambda _: object())
@@ -342,6 +348,40 @@ def test_cmd_install_app_bundle_reports_unavailable_context(monkeypatch, capsys)
     assert "App bundle install is unavailable in this context" in captured.err
 
 
+def test_cmd_restart_launch_agent_succeeds(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(cli, "restart_launch_agent", lambda: True)
+    monkeypatch.setattr(cli, "launch_agent_path", lambda: Path("/tmp/com.moonshineflow.daemon.plist"))
+
+    exit_code = cli.cmd_restart_launch_agent(argparse.Namespace())
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "Restarted launch agent: /tmp/com.moonshineflow.daemon.plist" in captured.out
+
+
+def test_cmd_restart_launch_agent_reports_missing(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(cli, "restart_launch_agent", lambda: False)
+
+    exit_code = cli.cmd_restart_launch_agent(argparse.Namespace())
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert "Launch agent is not installed." in captured.out
+
+
+def test_cmd_restart_launch_agent_reports_failure(monkeypatch, capsys) -> None:
+    def raise_error() -> bool:
+        raise RuntimeError("launchctl restart failed: denied")
+
+    monkeypatch.setattr(cli, "restart_launch_agent", raise_error)
+
+    exit_code = cli.cmd_restart_launch_agent(argparse.Namespace())
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert "launchctl restart failed: denied" in captured.err
+
+
 def test_latest_launchd_runtime_warning_detects_not_trusted(tmp_path: Path) -> None:
     err_log = tmp_path / "daemon.err.log"
     err_log.write_text(
@@ -414,6 +454,73 @@ def test_cmd_doctor_prints_runtime_warning_from_daemon_log(monkeypatch, capsys, 
     assert exit_code == 0
     assert "Launchd runtime status: WARNING" in captured.out
     assert "not trusted" in captured.out
+
+
+def test_cmd_doctor_marks_permissions_incomplete_when_runtime_warning_present(
+    monkeypatch,
+    capsys,
+    tmp_path: Path,
+) -> None:
+    fake_transcriber_mod = ModuleType("moonshine_flow.transcriber")
+
+    class FakeTranscriber:
+        def __init__(self, model_size: str, language: str, device: str) -> None:
+            self._summary = f"{model_size}:{language}:{device}"
+
+        def backend_summary(self) -> str:
+            return self._summary
+
+    fake_transcriber_mod.MoonshineTranscriber = FakeTranscriber
+    monkeypatch.setitem(sys.modules, "moonshine_flow.transcriber", fake_transcriber_mod)
+    monkeypatch.setattr(cli, "_resolve_config_path", lambda _: Path("/tmp/config.toml"))
+    monkeypatch.setattr(
+        cli,
+        "load_config",
+        lambda _: SimpleNamespace(
+            model=SimpleNamespace(size=SimpleNamespace(value="base"), language="ja", device="mps")
+        ),
+    )
+    monkeypatch.setattr(cli, "find_spec", lambda _: object())
+    monkeypatch.setattr(
+        cli,
+        "check_all_permissions",
+        lambda: PermissionReport(microphone=True, accessibility=True, input_monitoring=True),
+    )
+    monkeypatch.setattr(
+        cli,
+        "read_launch_agent_plist",
+        lambda: {
+            "Label": "com.moonshineflow.daemon",
+            "ProgramArguments": ["/usr/bin/python3", "-m", "moonshine_flow.cli", "run"],
+        },
+    )
+    monkeypatch.setattr(cli, "launch_agent_path", lambda: Path("/tmp/com.moonshineflow.daemon.plist"))
+    out_log = tmp_path / "daemon.out.log"
+    err_log = tmp_path / "daemon.err.log"
+    err_log.write_text(
+        "\n".join(
+            [
+                "2026-02-27 10:00:00,000 INFO [moonshine_flow.daemon] Moonshine Flow daemon starting",
+                "2026-02-27 10:00:00,100 WARNING [pynput.keyboard.Listener] This process is not trusted!",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(cli, "launch_agent_log_paths", lambda: (out_log, err_log))
+    monkeypatch.setattr(cli, "recommended_permission_target", lambda: Path("/tmp/target.app"))
+    monkeypatch.setattr(
+        cli,
+        "check_permissions_in_launchd_context",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("launchd check should not run")),
+    )
+
+    exit_code = cli.cmd_doctor(argparse.Namespace(config=None, launchd_check=False))
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "Terminal permissions: OK" in captured.out
+    assert "Permissions: INCOMPLETE" in captured.out
+    assert "Launchd runtime log indicates trust failure" in captured.out
 
 
 def test_cmd_doctor_prints_install_hint_when_launch_agent_missing(monkeypatch, capsys) -> None:

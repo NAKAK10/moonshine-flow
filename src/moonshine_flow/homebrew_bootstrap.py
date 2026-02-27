@@ -25,7 +25,6 @@ ENV_LIBEXEC = "MOONSHINE_FLOW_LIBEXEC"
 ENV_VAR_DIR = "MOONSHINE_FLOW_VAR_DIR"
 ENV_PYTHON = "MOONSHINE_FLOW_PYTHON"
 ENV_UV = "MOONSHINE_FLOW_UV"
-ENV_DAEMON_PYTHON = "MOONSHINE_FLOW_DAEMON_PYTHON"
 
 
 class RuntimeRepairError(RuntimeError):
@@ -54,11 +53,6 @@ class RuntimeCandidate:
     @property
     def python_path(self) -> Path:
         return self.venv_dir / "bin" / "python"
-
-    @property
-    def daemon_python_path(self) -> Path:
-        """Dedicated executable used for daemon launches."""
-        return self.venv_dir / "bin" / "MoonshineFlow"
 
     def is_healthy(self) -> bool:
         python = self.python_path
@@ -427,65 +421,94 @@ class RuntimeManager:
             raise RuntimeRepairError(f"No healthy runtime available after recovery.\n{detail}")
         raise RuntimeRepairError("No healthy runtime available after recovery")
 
-    def launch(self, cli_args: Sequence[str]) -> None:
+    def launch(self, cli_args: Sequence[str]) -> int:
         runtime = self.resolve_runtime()
-        daemon_python = self._ensure_daemon_python_executable(runtime)
-        command = [str(daemon_python), "-m", "moonshine_flow.cli", *cli_args]
-        env = os.environ.copy()
+        env_updates: dict[str, str] = {}
         project_src = self._project_dir / "src"
+        runtime_site = self._runtime_site_packages(runtime)
+        injected_paths: list[str] = []
         if project_src.is_dir():
-            existing = env.get("PYTHONPATH", "")
-            env["PYTHONPATH"] = f"{project_src}:{existing}" if existing else str(project_src)
-        env[ENV_BOOTSTRAP_SCRIPT] = str(
+            injected_paths.append(str(project_src))
+        if runtime_site.is_dir():
+            injected_paths.append(str(runtime_site))
+
+        existing_pythonpath = os.environ.get("PYTHONPATH", "")
+        if injected_paths:
+            path_items = [*injected_paths]
+            if existing_pythonpath:
+                path_items.append(existing_pythonpath)
+            env_updates["PYTHONPATH"] = os.pathsep.join(path_items)
+
+        env_updates[ENV_BOOTSTRAP_SCRIPT] = str(
             (self._project_dir / "src" / "moonshine_flow" / "homebrew_bootstrap.py").resolve(
                 strict=False
             )
         )
-        env[ENV_LIBEXEC] = str(self._project_dir.resolve(strict=False))
-        env[ENV_VAR_DIR] = str(self._state_dir.resolve(strict=False))
-        env[ENV_PYTHON] = str(runtime.toolchain.python_bin.resolve(strict=False))
-        env[ENV_UV] = str(runtime.toolchain.uv_bin.resolve(strict=False))
-        env[ENV_DAEMON_PYTHON] = str(daemon_python.resolve(strict=False))
-        os.execve(command[0], command, env)
+        env_updates[ENV_LIBEXEC] = str(self._project_dir.resolve(strict=False))
+        env_updates[ENV_VAR_DIR] = str(self._state_dir.resolve(strict=False))
+        env_updates[ENV_PYTHON] = str(runtime.toolchain.python_bin.resolve(strict=False))
+        env_updates[ENV_UV] = str(runtime.toolchain.uv_bin.resolve(strict=False))
+
+        if self._requires_runtime_exec(runtime):
+            return self._exec_cli_with_runtime_python(runtime, cli_args, env_updates)
+
+        return self._run_cli_in_current_process(cli_args, env_updates, injected_paths)
 
     @staticmethod
-    def _ensure_daemon_python_executable(runtime: RuntimeCandidate) -> Path:
-        source = runtime.python_path
-        target = runtime.daemon_python_path
+    def _runtime_site_packages(runtime: RuntimeCandidate) -> Path:
+        version_tag = f"python{sys.version_info.major}.{sys.version_info.minor}"
+        return runtime.venv_dir / "lib" / version_tag / "site-packages"
 
-        if not source.exists() or not os.access(source, os.X_OK):
-            return source
+    @staticmethod
+    def _requires_runtime_exec(runtime: RuntimeCandidate) -> bool:
+        runtime_arch = _normalize_arch(runtime.toolchain.arch)
+        current_arch = _normalize_arch(platform.machine())
+        if runtime_arch in {"unknown", "universal2"}:
+            return False
+        if current_arch in {"unknown", "universal2"}:
+            return False
+        return runtime_arch != current_arch
+
+    @staticmethod
+    def _exec_cli_with_runtime_python(
+        runtime: RuntimeCandidate,
+        cli_args: Sequence[str],
+        env_updates: dict[str, str],
+    ) -> int:
+        command = runtime.cli_command(cli_args)
+        env = os.environ.copy()
+        env.update(env_updates)
+        os.execve(command[0], command, env)
+        return 0
+
+    @staticmethod
+    def _run_cli_in_current_process(
+        cli_args: Sequence[str],
+        env_updates: dict[str, str],
+        injected_paths: Sequence[str],
+    ) -> int:
+        original_argv = list(sys.argv)
+        original_sys_path = list(sys.path)
+        original_env: dict[str, str | None] = {key: os.environ.get(key) for key in env_updates}
 
         try:
-            resolved_source = source.resolve(strict=True)
-        except OSError:
-            resolved_source = source
+            for key, value in env_updates.items():
+                os.environ[key] = value
+            for path in reversed(injected_paths):
+                if path and path not in sys.path:
+                    sys.path.insert(0, path)
+            sys.argv = ["moonshine-flow", *cli_args]
+            from moonshine_flow.cli import main as cli_main
 
-        try:
-            source_stat = resolved_source.stat()
-        except OSError:
-            return source
-
-        try:
-            target_stat = target.stat()
-            refresh_target = (
-                target_stat.st_size != source_stat.st_size
-                or target_stat.st_mtime_ns < source_stat.st_mtime_ns
-            )
-        except OSError:
-            refresh_target = True
-
-        if refresh_target:
-            try:
-                target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(resolved_source, target)
-                target.chmod(target.stat().st_mode | 0o111)
-            except OSError:
-                return source
-
-        if target.exists() and os.access(target, os.X_OK):
-            return target
-        return source
+            return int(cli_main())
+        finally:
+            sys.argv = original_argv
+            sys.path[:] = original_sys_path
+            for key, value in original_env.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
 
     def _resolve_for_toolchain(self, toolchain: Toolchain) -> RuntimeCandidate:
         primary = RuntimeCandidate(
@@ -807,7 +830,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         verbose_bootstrap=verbose_bootstrap,
     )
     try:
-        manager.launch(cli_args)
+        return manager.launch(cli_args)
     except RuntimeRepairError as exc:
         print(f"moonshine-flow runtime recovery failed: {exc}", file=sys.stderr)
         print("Try: brew reinstall moonshine-flow", file=sys.stderr)
@@ -817,7 +840,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 1
-    return 0
 
 
 if __name__ == "__main__":

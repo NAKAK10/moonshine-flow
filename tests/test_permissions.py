@@ -68,6 +68,39 @@ def test_request_all_permissions_requests_only_missing(monkeypatch) -> None:
     assert calls == {"mic": 1, "ax": 0, "im": 1}
 
 
+def test_request_all_permissions_requests_accessibility_before_microphone(monkeypatch) -> None:
+    states = [
+        PermissionReport(microphone=False, accessibility=False, input_monitoring=False),
+        PermissionReport(microphone=True, accessibility=True, input_monitoring=True),
+    ]
+    order: list[str] = []
+
+    def fake_check_all_permissions() -> PermissionReport:
+        return states.pop(0)
+
+    monkeypatch.setattr(
+        "moonshine_flow.permissions.check_all_permissions",
+        fake_check_all_permissions,
+    )
+    monkeypatch.setattr(
+        "moonshine_flow.permissions.request_microphone_permission",
+        lambda: order.append("mic") or True,
+    )
+    monkeypatch.setattr(
+        "moonshine_flow.permissions.request_accessibility_permission",
+        lambda: order.append("ax") or True,
+    )
+    monkeypatch.setattr(
+        "moonshine_flow.permissions.request_input_monitoring_permission",
+        lambda: order.append("im") or True,
+    )
+
+    result = request_all_permissions()
+
+    assert result.all_granted
+    assert order == ["ax", "im", "mic"]
+
+
 def test_check_accessibility_permission_uses_application_services(monkeypatch) -> None:
     monkeypatch.setattr("moonshine_flow.permissions._is_macos", lambda: True)
     monkeypatch.setitem(

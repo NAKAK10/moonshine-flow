@@ -30,12 +30,12 @@ class PermissionReport:
     @property
     def missing(self) -> list[str]:
         missing_permissions: list[str] = []
-        if not self.microphone:
-            missing_permissions.append("Microphone")
         if not self.accessibility:
             missing_permissions.append("Accessibility")
         if not self.input_monitoring:
             missing_permissions.append("Input Monitoring")
+        if not self.microphone:
+            missing_permissions.append("Microphone")
         return missing_permissions
 
 
@@ -292,12 +292,12 @@ def request_all_permissions() -> PermissionReport:
     if before.all_granted:
         return before
 
-    if not before.microphone:
-        request_microphone_permission()
     if not before.accessibility:
         request_accessibility_permission()
     if not before.input_monitoring:
         request_input_monitoring_permission()
+    if not before.microphone:
+        request_microphone_permission()
 
     return check_all_permissions()
 
@@ -365,9 +365,9 @@ def format_permission_guidance(report: PermissionReport) -> str:
         "",
         "Open: System Settings -> Privacy & Security",
         "Then enable this terminal/app in:",
-        "- Microphone",
         "- Accessibility",
         "- Input Monitoring",
+        "- Microphone",
         "",
         f"Current executable: {executable}",
         f"Preferred permission target: {preferred_target}",

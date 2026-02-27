@@ -19,6 +19,7 @@ from moonshine_flow.launchd import (
     launch_agent_log_paths,
     launch_agent_path,
     read_launch_agent_plist,
+    restart_launch_agent,
     uninstall_launch_agent,
 )
 from moonshine_flow.logging_setup import configure_logging
@@ -75,12 +76,12 @@ def cmd_run(args: argparse.Namespace) -> int:
     in_launchd_context = os.environ.get("XPC_SERVICE_NAME") == LAUNCH_AGENT_LABEL
     if in_launchd_context and not report.all_granted:
         # Trigger prompts from daemon context so launchd-triggered runs can obtain trust.
-        if not report.microphone:
-            request_microphone_permission()
         if not report.accessibility:
             request_accessibility_permission()
         if not report.input_monitoring:
             request_input_monitoring_permission()
+        if not report.microphone:
+            request_microphone_permission()
         report = check_all_permissions()
     if not report.all_granted:
         LOGGER.warning(format_permission_guidance(report))
@@ -181,6 +182,20 @@ def cmd_uninstall_launch_agent(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_restart_launch_agent(args: argparse.Namespace) -> int:
+    del args
+    try:
+        restarted = restart_launch_agent()
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    if not restarted:
+        print("Launch agent is not installed.")
+        return 2
+    print(f"Restarted launch agent: {launch_agent_path()}")
+    return 0
+
+
 def cmd_install_app_bundle(args: argparse.Namespace) -> int:
     app_path = Path(args.path).expanduser() if args.path else default_app_bundle_path()
     installed = install_app_bundle_from_env(app_path)
@@ -217,6 +232,17 @@ def _derive_launchd_permission_check_command(
     if resolved_parts:
         return [resolved_parts[0], "check-permissions"]
     return default_command
+
+
+def _derive_launchd_permission_target(launchd_payload: dict[str, object] | None) -> str | None:
+    """Resolve permission target path used by launchd daemon process."""
+    if not isinstance(launchd_payload, dict):
+        return None
+    program_args = launchd_payload.get("ProgramArguments")
+    if not isinstance(program_args, list) or not program_args:
+        return None
+    target = str(program_args[0]).strip()
+    return target or None
 
 
 def _latest_launchd_runtime_warning(err_log_path: Path) -> str | None:
@@ -263,6 +289,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     if launchd_payload is None:
         print(f"LaunchAgent plist: MISSING ({launch_agent_path()})")
         print("Install LaunchAgent: mflow install-launch-agent")
+        launchd_permission_target = None
     else:
         print(f"LaunchAgent plist: FOUND ({launch_agent_path()})")
         print(f"LaunchAgent label: {launchd_payload.get('Label', 'UNKNOWN')}")
@@ -271,6 +298,9 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             print(f"LaunchAgent program: {' '.join(str(part) for part in program_args)}")
         else:
             print("LaunchAgent program: UNKNOWN")
+        launchd_permission_target = _derive_launchd_permission_target(launchd_payload)
+        if launchd_permission_target:
+            print(f"Launchd permission target (recommended): {launchd_permission_target}")
     print(f"Daemon stdout log: {out_log_path}")
     print(f"Daemon stderr log: {err_log_path}")
     runtime_warning = _latest_launchd_runtime_warning(err_log_path)
@@ -291,11 +321,12 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     print("Transcriber:", transcriber.backend_summary())
 
     report = check_all_permissions()
-    print("Permissions:", "OK" if report.all_granted else "INCOMPLETE")
-    if not report.all_granted:
-        print(format_permission_guidance(report))
+    print("Terminal permissions:", "OK" if report.all_granted else "INCOMPLETE")
 
-    if getattr(args, "launchd_check", False):
+    launchd_report = None
+    probe_error = False
+    should_check_launchd = bool(getattr(args, "launchd_check", False))
+    if should_check_launchd:
         launchd_command = _derive_launchd_permission_check_command(launchd_payload)
         probe = check_permissions_in_launchd_context(command=launchd_command)
         if probe.report is not None:
@@ -306,7 +337,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             if set(launchd_report.missing) != set(report.missing):
                 print(
                     "Permission mismatch detected between terminal and launchd contexts. "
-                    "Grant permissions for the recommended target above."
+                    "Grant permissions for the launchd target shown above."
                 )
             if runtime_warning:
                 print(
@@ -314,11 +345,41 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                     "Restart the launch agent after granting permissions."
                 )
         else:
+            probe_error = True
             print("Launchd permissions: ERROR")
             if probe.error:
                 print(f"Launchd check error: {probe.error}")
             if probe.stderr:
                 print(f"Launchd check stderr: {probe.stderr}")
+
+    effective_incomplete = not report.all_granted
+    if launchd_report is not None:
+        effective_incomplete = effective_incomplete or not launchd_report.all_granted
+    if probe_error:
+        effective_incomplete = True
+    if runtime_warning:
+        effective_incomplete = True
+
+    print("Permissions:", "OK" if not effective_incomplete else "INCOMPLETE")
+    if not report.all_granted:
+        print(format_permission_guidance(report))
+    elif launchd_report is not None and not launchd_report.all_granted:
+        if launchd_permission_target:
+            print(
+                "Grant permissions for this launchd target and restart the launch agent: "
+                f"{launchd_permission_target}"
+            )
+        else:
+            print("Grant permissions for the launchd target shown above and restart the launch agent.")
+    elif probe_error:
+        print("Could not verify launchd permission state from launchctl output.")
+    elif runtime_warning:
+        target = launchd_permission_target or str(recommended_permission_target())
+        print(
+            "Launchd runtime log indicates trust failure. "
+            "Re-grant Accessibility/Input Monitoring for this target and restart: "
+            f"{target}"
+        )
 
     if platform.system() == "Darwin" and os_machine == "arm64" and py_machine != "arm64":
         print(
@@ -388,6 +449,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     uninstall_parser = subparsers.add_parser("uninstall-launch-agent", help="Remove launchd agent")
     uninstall_parser.set_defaults(func=cmd_uninstall_launch_agent)
+
+    restart_parser = subparsers.add_parser("restart-launch-agent", help="Restart launchd agent")
+    restart_parser.set_defaults(func=cmd_restart_launch_agent)
 
     app_bundle_parser = subparsers.add_parser(
         "install-app-bundle",

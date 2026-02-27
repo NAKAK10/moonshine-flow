@@ -20,28 +20,59 @@ tap や Homebrew 環境起因でインストール失敗する場合は、次を
 ./scripts/install_brew.sh
 ```
 
-必要な macOS 権限:
-- Microphone
-- Accessibility
-- Input Monitoring
-
+## 権限設定
 設定場所: `System Settings -> Privacy & Security`
 
+必要な macOS 権限:
+- Accessibility
+- Input Monitoring
+- Microphone
+
+### 一般利用（ターミナル実行）
+1. 権限要求を出す:
+```bash
+mflow check-permissions --request
+```
+2. デーモンを起動する:
+```bash
+mflow run
+```
+
+### launch-agent 利用（ログイン時自動起動）
+1. 初回セットアップのみ: launch-agent をインストールする（既定で app bundle も作成/更新）:
+```bash
+mflow install-launch-agent
+```
+2. macOS 設定で `Permission target (recommended)` に表示されたパスへ権限を許可する。
+3. 権限を変更した後に launch-agent を再起動する:
+```bash
+mflow restart-launch-agent
+```
+4. ターミナル実行と launchd 実行の両方を確認する:
+```bash
+mflow doctor --launchd-check
+```
+
 ## コマンド一覧
+### 一般コマンド
 | コマンド | 説明 |
 | --- | --- |
 | `moonshine-flow -v` | パッケージバージョンを表示して終了します（ビルド時にリリースタグから確定）。 |
 | `moonshine-flow --version` | パッケージバージョンを表示して終了します（ビルド時にリリースタグから確定）。 |
 | `moonshine-flow run` | バックグラウンドデーモンを起動します。 |
 | `moonshine-flow doctor` | ランタイム診断と権限状態を表示します。 |
-| `moonshine-flow doctor --launchd-check` | ターミナル実行と launchd 実行の権限状態を比較します。 |
 | `moonshine-flow check-permissions` | macOS 権限の状態を確認します（プロンプトなし）。 |
 | `moonshine-flow check-permissions --request` | 可能な範囲で不足権限の許可を要求し、状態を表示します。 |
-| `moonshine-flow install-launch-agent` | launchd エージェントをインストールします（既定で不足権限の許可を要求）。 |
+
+### launch-agent / app コマンド
+| コマンド | 説明 |
+| --- | --- |
+| `moonshine-flow install-launch-agent` | 初回セットアップ用: launchd エージェントをインストールします（既定で不足権限の許可を要求）。 |
 | `moonshine-flow install-launch-agent --allow-missing-permissions` | 必須権限が不足していても launchd エージェントをインストールします。 |
 | `moonshine-flow install-launch-agent --no-request-permissions` | 権限要求プロンプトを出さず、現在の権限状態だけ確認します。 |
 | `moonshine-flow install-launch-agent --verbose-bootstrap` | インストール中の runtime 自動修復ログを詳細表示します。 |
-| `moonshine-flow install-app-bundle` | 現在の Homebrew runtime 文脈から `~/Applications/MoonshineFlow.app` を作成/更新します。 |
+| `moonshine-flow doctor --launchd-check` | ターミナル実行と launchd 実行の権限状態を比較します。 |
+| `moonshine-flow restart-launch-agent` | 新しく許可した macOS 権限を反映するために launchd エージェントを再起動します。 |
 | `moonshine-flow uninstall-launch-agent` | launchd エージェントを削除します。 |
 
 上記コマンドはすべて `mflow` エイリアスでも同様に使えます。
@@ -86,9 +117,20 @@ brew uninstall moonshine-flow
 - `/opt/homebrew` 側に `python@3.11` と `uv` が無い場合は、エラーメッセージに表示された手順に従って導入してください。
 
 ## launchd 自動起動
+launch-agent 専用の実行手順:
 ```bash
+# 初回セットアップ
 moonshine-flow install-launch-agent
+
+# 権限変更後の反映
+moonshine-flow doctor --launchd-check
+moonshine-flow restart-launch-agent
+moonshine-flow doctor --launchd-check
+
+# 必要時のみ詳細ログ付きで再インストール
 moonshine-flow install-launch-agent --verbose-bootstrap
+
+# 自動起動の削除
 moonshine-flow uninstall-launch-agent
 ```
 
@@ -99,18 +141,10 @@ moonshine-flow uninstall-launch-agent
 - 意図的に継続したい場合だけ `--allow-missing-permissions` を使ってください。
 - runtime 自動修復ログは成功時は最小表示です。`uv sync` の詳細が必要なときだけ `--verbose-bootstrap` を指定してください。
 - インストール成功時に `Permission target (recommended)` が表示されます。macOS 権限設定ではそのパスをそのまま許可してください。
-- runtime bootstrap は daemon を runtime の `bin/` 配下に生成する専用実行ファイル `MoonshineFlow` 経由で起動します。これにより、権限識別が汎用の `python3.11` コマンド名に引きずられにくくなります。
-- macOS の権限ダイアログに `mflow` ではなく `python3.11` が表示される場合があります。権限はコマンド名ではなく、実行ファイルの実体パス（および署名）単位で管理されます。
-
-推奨確認手順:
-```bash
-mflow install-launch-agent
-mflow doctor --launchd-check
-```
-次の表示を確認してください:
-- `LaunchAgent plist: FOUND`
-- `Permissions: OK`
-- `Launchd permissions: OK`
+- System Settings で権限を許可した後は、`mflow restart-launch-agent` を実行して即時反映してください。
+- `install-app-bundle` は上級者向けの手動コマンドで、通常運用では不要です。
+- LaunchAgent は `~/Applications/MoonshineFlow.app/Contents/MacOS/MoonshineFlow` を起動し、bootstrap はその同一プロセス識別を維持したまま runtime 依存を読み込みます。
+- 権限はコマンド名ではなく、実行ファイルの実体パス（および署名）単位で管理されます。launchd では `doctor` が示す推奨ターゲットを許可してください。
 
 ## 設定ファイル
 デフォルト: `~/.config/moonshine-flow/config.toml`  
