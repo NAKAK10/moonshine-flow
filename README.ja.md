@@ -34,6 +34,7 @@ tap や Homebrew 環境起因でインストール失敗する場合は、次を
 | `moonshine-flow --version` | パッケージバージョンを表示して終了します（ビルド時にリリースタグから確定）。 |
 | `moonshine-flow run` | バックグラウンドデーモンを起動します。 |
 | `moonshine-flow doctor` | ランタイム診断と権限状態を表示します。 |
+| `moonshine-flow doctor --launchd-check` | ターミナル実行と launchd 実行の権限状態を比較します。 |
 | `moonshine-flow check-permissions` | macOS 権限の状態を確認します（プロンプトなし）。 |
 | `moonshine-flow check-permissions --request` | 可能な範囲で不足権限の許可を要求し、状態を表示します。 |
 | `moonshine-flow install-launch-agent` | launchd エージェントをインストールします（既定で不足権限の許可を要求）。 |
@@ -96,6 +97,16 @@ moonshine-flow uninstall-launch-agent
 - 意図的に継続したい場合だけ `--allow-missing-permissions` を使ってください。
 - runtime 自動修復ログは成功時は最小表示です。`uv sync` の詳細が必要なときだけ `--verbose-bootstrap` を指定してください。
 - インストール成功時に `Permission target (recommended)` が表示されます。macOS 権限設定ではそのパスをそのまま許可してください。
+
+推奨確認手順:
+```bash
+mflow install-launch-agent
+mflow doctor --launchd-check
+```
+次の表示を確認してください:
+- `LaunchAgent plist: FOUND`
+- `Permissions: OK`
+- `Launchd permissions: OK`
 
 ## 設定ファイル
 デフォルト: `~/.config/moonshine-flow/config.toml`  

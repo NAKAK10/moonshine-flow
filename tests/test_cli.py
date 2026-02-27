@@ -6,7 +6,7 @@ from types import ModuleType, SimpleNamespace
 import pytest
 
 from moonshine_flow import cli
-from moonshine_flow.permissions import PermissionReport
+from moonshine_flow.permissions import LaunchdPermissionProbe, PermissionReport
 
 
 def test_has_moonshine_backend_true(monkeypatch) -> None:
@@ -33,6 +33,12 @@ def test_check_permissions_parser_has_request_flag() -> None:
     parser = cli.build_parser()
     args = parser.parse_args(["check-permissions", "--request"])
     assert args.request is True
+
+
+def test_doctor_parser_has_launchd_check_flag() -> None:
+    parser = cli.build_parser()
+    args = parser.parse_args(["doctor", "--launchd-check"])
+    assert args.launchd_check is True
 
 
 def test_install_launch_agent_parser_defaults() -> None:
@@ -178,7 +184,7 @@ def test_cmd_doctor_prints_launch_agent_and_log_paths(monkeypatch, capsys) -> No
     )
     monkeypatch.setattr(cli, "recommended_permission_target", lambda: Path("/tmp/target.app"))
 
-    exit_code = cli.cmd_doctor(argparse.Namespace(config=None))
+    exit_code = cli.cmd_doctor(argparse.Namespace(config=None, launchd_check=False))
 
     captured = capsys.readouterr()
     assert exit_code == 0
@@ -187,6 +193,172 @@ def test_cmd_doctor_prints_launch_agent_and_log_paths(monkeypatch, capsys) -> No
     assert "Permission target (recommended): /tmp/target.app" in captured.out
     assert "Daemon stdout log: /tmp/daemon.out.log" in captured.out
     assert "Daemon stderr log: /tmp/daemon.err.log" in captured.out
+
+
+def test_cmd_doctor_prints_install_hint_when_launch_agent_missing(monkeypatch, capsys) -> None:
+    fake_transcriber_mod = ModuleType("moonshine_flow.transcriber")
+
+    class FakeTranscriber:
+        def __init__(self, model_size: str, language: str, device: str) -> None:
+            self._summary = f"{model_size}:{language}:{device}"
+
+        def backend_summary(self) -> str:
+            return self._summary
+
+    fake_transcriber_mod.MoonshineTranscriber = FakeTranscriber
+    monkeypatch.setitem(sys.modules, "moonshine_flow.transcriber", fake_transcriber_mod)
+    monkeypatch.setattr(cli, "_resolve_config_path", lambda _: Path("/tmp/config.toml"))
+    monkeypatch.setattr(
+        cli,
+        "load_config",
+        lambda _: SimpleNamespace(
+            model=SimpleNamespace(size=SimpleNamespace(value="base"), language="ja", device="mps")
+        ),
+    )
+    monkeypatch.setattr(cli, "find_spec", lambda _: object())
+    monkeypatch.setattr(
+        cli,
+        "check_all_permissions",
+        lambda: PermissionReport(microphone=True, accessibility=True, input_monitoring=True),
+    )
+    monkeypatch.setattr(cli, "read_launch_agent_plist", lambda: None)
+    monkeypatch.setattr(cli, "launch_agent_path", lambda: Path("/tmp/com.moonshineflow.daemon.plist"))
+    monkeypatch.setattr(
+        cli,
+        "launch_agent_log_paths",
+        lambda: (Path("/tmp/daemon.out.log"), Path("/tmp/daemon.err.log")),
+    )
+    monkeypatch.setattr(cli, "recommended_permission_target", lambda: Path("/tmp/target.app"))
+
+    exit_code = cli.cmd_doctor(argparse.Namespace(config=None, launchd_check=False))
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "LaunchAgent plist: MISSING (/tmp/com.moonshineflow.daemon.plist)" in captured.out
+    assert "Install LaunchAgent: mflow install-launch-agent" in captured.out
+
+
+def test_cmd_doctor_compares_launchd_permissions_when_enabled(monkeypatch, capsys) -> None:
+    fake_transcriber_mod = ModuleType("moonshine_flow.transcriber")
+
+    class FakeTranscriber:
+        def __init__(self, model_size: str, language: str, device: str) -> None:
+            self._summary = f"{model_size}:{language}:{device}"
+
+        def backend_summary(self) -> str:
+            return self._summary
+
+    fake_transcriber_mod.MoonshineTranscriber = FakeTranscriber
+    monkeypatch.setitem(sys.modules, "moonshine_flow.transcriber", fake_transcriber_mod)
+    monkeypatch.setattr(cli, "_resolve_config_path", lambda _: Path("/tmp/config.toml"))
+    monkeypatch.setattr(
+        cli,
+        "load_config",
+        lambda _: SimpleNamespace(
+            model=SimpleNamespace(size=SimpleNamespace(value="base"), language="ja", device="mps")
+        ),
+    )
+    monkeypatch.setattr(cli, "find_spec", lambda _: object())
+    monkeypatch.setattr(
+        cli,
+        "check_all_permissions",
+        lambda: PermissionReport(microphone=True, accessibility=True, input_monitoring=True),
+    )
+    monkeypatch.setattr(
+        cli,
+        "read_launch_agent_plist",
+        lambda: {
+            "Label": "com.moonshineflow.daemon",
+            "ProgramArguments": ["/usr/bin/python3", "-m", "moonshine_flow.cli", "run"],
+        },
+    )
+    monkeypatch.setattr(cli, "launch_agent_path", lambda: Path("/tmp/com.moonshineflow.daemon.plist"))
+    monkeypatch.setattr(
+        cli,
+        "launch_agent_log_paths",
+        lambda: (Path("/tmp/daemon.out.log"), Path("/tmp/daemon.err.log")),
+    )
+    called: dict[str, list[str]] = {}
+
+    def fake_launchd_check(*, command: list[str]) -> LaunchdPermissionProbe:
+        called["command"] = command
+        return LaunchdPermissionProbe(
+            ok=True,
+            report=PermissionReport(microphone=False, accessibility=True, input_monitoring=True),
+        )
+
+    monkeypatch.setattr(cli, "check_permissions_in_launchd_context", fake_launchd_check)
+
+    exit_code = cli.cmd_doctor(argparse.Namespace(config=None, launchd_check=True))
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert called["command"] == ["/usr/bin/python3", "-m", "moonshine_flow.cli", "check-permissions"]
+    assert "Launchd permissions: INCOMPLETE" in captured.out
+    assert "Launchd missing permissions: Microphone" in captured.out
+    assert "Permission mismatch detected between terminal and launchd contexts" in captured.out
+
+
+def test_cmd_doctor_reports_launchd_check_error(monkeypatch, capsys) -> None:
+    fake_transcriber_mod = ModuleType("moonshine_flow.transcriber")
+
+    class FakeTranscriber:
+        def __init__(self, model_size: str, language: str, device: str) -> None:
+            self._summary = f"{model_size}:{language}:{device}"
+
+        def backend_summary(self) -> str:
+            return self._summary
+
+    fake_transcriber_mod.MoonshineTranscriber = FakeTranscriber
+    monkeypatch.setitem(sys.modules, "moonshine_flow.transcriber", fake_transcriber_mod)
+    monkeypatch.setattr(cli, "_resolve_config_path", lambda _: Path("/tmp/config.toml"))
+    monkeypatch.setattr(
+        cli,
+        "load_config",
+        lambda _: SimpleNamespace(
+            model=SimpleNamespace(size=SimpleNamespace(value="base"), language="ja", device="mps")
+        ),
+    )
+    monkeypatch.setattr(cli, "find_spec", lambda _: object())
+    monkeypatch.setattr(
+        cli,
+        "check_all_permissions",
+        lambda: PermissionReport(microphone=True, accessibility=True, input_monitoring=True),
+    )
+    monkeypatch.setattr(
+        cli,
+        "read_launch_agent_plist",
+        lambda: {
+            "Label": "com.moonshineflow.daemon",
+            "ProgramArguments": ["/usr/local/bin/mflow", "run", "--config", "/tmp/config.toml"],
+        },
+    )
+    monkeypatch.setattr(cli, "launch_agent_path", lambda: Path("/tmp/com.moonshineflow.daemon.plist"))
+    monkeypatch.setattr(
+        cli,
+        "launch_agent_log_paths",
+        lambda: (Path("/tmp/daemon.out.log"), Path("/tmp/daemon.err.log")),
+    )
+    called: dict[str, list[str]] = {}
+
+    def fake_launchd_check(*, command: list[str]) -> LaunchdPermissionProbe:
+        called["command"] = command
+        return LaunchdPermissionProbe(
+            ok=False,
+            error="Could not parse permission status from launchd check output (exit=1)",
+            stderr="launchctl failed",
+        )
+
+    monkeypatch.setattr(cli, "check_permissions_in_launchd_context", fake_launchd_check)
+
+    exit_code = cli.cmd_doctor(argparse.Namespace(config=None, launchd_check=True))
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert called["command"] == ["/usr/local/bin/mflow", "check-permissions"]
+    assert "Launchd permissions: ERROR" in captured.out
+    assert "Launchd check error:" in captured.out
+    assert "Launchd check stderr: launchctl failed" in captured.out
 
 
 def test_parser_version_long_flag_outputs_version(capsys) -> None:

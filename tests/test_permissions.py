@@ -3,8 +3,11 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from moonshine_flow.permissions import (
+    _parse_permission_report_from_text,
+    LaunchdPermissionProbe,
     PermissionReport,
     check_accessibility_permission,
+    check_permissions_in_launchd_context,
     format_permission_guidance,
     recommended_permission_target,
     request_accessibility_permission,
@@ -138,3 +141,101 @@ def test_recommended_permission_target_falls_back_to_executable(monkeypatch) -> 
 
     resolved = recommended_permission_target()
     assert str(resolved).endswith("/tmp/custom/bin/python")
+
+
+def test_parse_permission_report_from_text_parses_expected_lines() -> None:
+    text = "\n".join(
+        [
+            "Microphone: OK",
+            "Accessibility: MISSING",
+            "Input Monitoring: OK",
+        ]
+    )
+
+    report = _parse_permission_report_from_text(text)
+
+    assert report == PermissionReport(microphone=True, accessibility=False, input_monitoring=True)
+
+
+def test_parse_permission_report_from_text_returns_none_when_incomplete() -> None:
+    text = "\n".join(
+        [
+            "Microphone: OK",
+            "Accessibility: OK",
+        ]
+    )
+
+    report = _parse_permission_report_from_text(text)
+    assert report is None
+
+
+def test_check_permissions_in_launchd_context_short_circuits_on_non_macos(monkeypatch) -> None:
+    expected = PermissionReport(microphone=True, accessibility=True, input_monitoring=True)
+    monkeypatch.setattr("moonshine_flow.permissions._is_macos", lambda: False)
+    monkeypatch.setattr("moonshine_flow.permissions.check_all_permissions", lambda: expected)
+    monkeypatch.setattr(
+        "moonshine_flow.permissions.subprocess.run",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("subprocess should not run")),
+    )
+
+    probe = check_permissions_in_launchd_context()
+
+    assert probe == LaunchdPermissionProbe(ok=True, report=expected)
+
+
+def test_check_permissions_in_launchd_context_parses_permission_output(monkeypatch) -> None:
+    monkeypatch.setattr("moonshine_flow.permissions._is_macos", lambda: True)
+    monkeypatch.setattr("moonshine_flow.permissions.os.getuid", lambda: 501)
+
+    called: dict[str, object] = {}
+
+    def fake_run(command, *, check, capture_output, text):
+        called["command"] = command
+        assert check is False
+        assert capture_output is True
+        assert text is True
+        return SimpleNamespace(
+            returncode=2,
+            stdout="\n".join(
+                [
+                    "Microphone: MISSING",
+                    "Accessibility: OK",
+                    "Input Monitoring: OK",
+                ]
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr("moonshine_flow.permissions.subprocess.run", fake_run)
+
+    probe = check_permissions_in_launchd_context(command=["mflow", "check-permissions"])
+
+    assert called["command"] == ["launchctl", "asuser", "501", "mflow", "check-permissions"]
+    assert probe.ok is True
+    assert probe.report == PermissionReport(
+        microphone=False,
+        accessibility=True,
+        input_monitoring=True,
+    )
+
+
+def test_check_permissions_in_launchd_context_reports_parse_error(monkeypatch) -> None:
+    monkeypatch.setattr("moonshine_flow.permissions._is_macos", lambda: True)
+    monkeypatch.setattr("moonshine_flow.permissions.os.getuid", lambda: 501)
+    monkeypatch.setattr(
+        "moonshine_flow.permissions.subprocess.run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=1,
+            stdout="unexpected output",
+            stderr="trace",
+        ),
+    )
+
+    probe = check_permissions_in_launchd_context()
+
+    assert probe.ok is False
+    assert probe.report is None
+    assert probe.error is not None
+    assert "Could not parse permission status" in probe.error
+    assert probe.stdout == "unexpected output"
+    assert probe.stderr == "trace"

@@ -5,10 +5,12 @@ from __future__ import annotations
 import logging
 import os
 import platform
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Event
+from typing import Sequence
 
 LOGGER = logging.getLogger(__name__)
 
@@ -37,8 +39,93 @@ class PermissionReport:
         return missing_permissions
 
 
+@dataclass(slots=True)
+class LaunchdPermissionProbe:
+    """Result of permission probing through launchd context."""
+
+    ok: bool
+    report: PermissionReport | None = None
+    error: str | None = None
+    stdout: str | None = None
+    stderr: str | None = None
+
+
 def _is_macos() -> bool:
     return platform.system() == "Darwin"
+
+
+def _parse_permission_report_from_text(text: str) -> PermissionReport | None:
+    values: dict[str, bool] = {}
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if ":" not in line:
+            continue
+        key, _, value = line.partition(":")
+        normalized_key = key.strip().lower()
+        normalized_value = value.strip().upper()
+        if normalized_key == "microphone":
+            values["microphone"] = normalized_value == "OK"
+        elif normalized_key == "accessibility":
+            values["accessibility"] = normalized_value == "OK"
+        elif normalized_key == "input monitoring":
+            values["input_monitoring"] = normalized_value == "OK"
+
+    expected = {"microphone", "accessibility", "input_monitoring"}
+    if set(values) != expected:
+        return None
+    return PermissionReport(
+        microphone=values["microphone"],
+        accessibility=values["accessibility"],
+        input_monitoring=values["input_monitoring"],
+    )
+
+
+def check_permissions_in_launchd_context(
+    *,
+    uid: int | None = None,
+    command: Sequence[str] | None = None,
+) -> LaunchdPermissionProbe:
+    """Run permission check through launchctl asuser to compare launchd context."""
+    if not _is_macos():
+        report = check_all_permissions()
+        return LaunchdPermissionProbe(ok=True, report=report)
+
+    resolved_uid = uid if uid is not None else os.getuid()
+    command_parts = list(command or ("mflow", "check-permissions"))
+    launchctl_command = ["launchctl", "asuser", str(resolved_uid), *command_parts]
+
+    try:
+        process = subprocess.run(
+            launchctl_command,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError as exc:
+        return LaunchdPermissionProbe(ok=False, error=f"Failed to run launchctl: {exc}")
+
+    stdout_text = process.stdout.strip() or None
+    stderr_text = process.stderr.strip() or None
+    parse_source = "\n".join(part for part in (stdout_text, stderr_text) if part)
+    report = _parse_permission_report_from_text(parse_source)
+    if report is None:
+        detail = (
+            f"Could not parse permission status from launchd check output "
+            f"(exit={process.returncode})"
+        )
+        return LaunchdPermissionProbe(
+            ok=False,
+            error=detail,
+            stdout=stdout_text,
+            stderr=stderr_text,
+        )
+
+    return LaunchdPermissionProbe(
+        ok=process.returncode in {0, 2},
+        report=report,
+        stdout=stdout_text,
+        stderr=stderr_text,
+    )
 
 
 def check_microphone_permission() -> bool:

@@ -34,6 +34,7 @@ Settings location: `System Settings -> Privacy & Security`
 | `moonshine-flow --version` | Show package version and exit (release-tag based at build time). |
 | `moonshine-flow run` | Run the background daemon. |
 | `moonshine-flow doctor` | Print runtime diagnostics and permission status. |
+| `moonshine-flow doctor --launchd-check` | Compare permission status between terminal and launchd context. |
 | `moonshine-flow check-permissions` | Check required macOS permissions without prompting. |
 | `moonshine-flow check-permissions --request` | Prompt for missing permissions where possible and show status. |
 | `moonshine-flow install-launch-agent` | Install the launchd agent for auto-start at login (requests permissions by default). |
@@ -96,6 +97,16 @@ Notes:
 - Use `--allow-missing-permissions` only when you intentionally want to install anyway.
 - Runtime auto-recovery output is quiet on success; use `--verbose-bootstrap` when you need full `uv sync` logs.
 - On successful install, the CLI prints `Permission target (recommended)`. Use that exact path in macOS permission settings.
+
+Recommended verification flow:
+```bash
+mflow install-launch-agent
+mflow doctor --launchd-check
+```
+Confirm these lines are shown:
+- `LaunchAgent plist: FOUND`
+- `Permissions: OK`
+- `Launchd permissions: OK`
 
 ## Config file
 Default: `~/.config/moonshine-flow/config.toml`  

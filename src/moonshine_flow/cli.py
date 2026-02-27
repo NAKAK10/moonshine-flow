@@ -22,6 +22,7 @@ from moonshine_flow.launchd import (
 from moonshine_flow.logging_setup import configure_logging
 from moonshine_flow.permissions import (
     check_all_permissions,
+    check_permissions_in_launchd_context,
     format_permission_guidance,
     recommended_permission_target,
     request_all_permissions,
@@ -156,6 +157,30 @@ def cmd_uninstall_launch_agent(args: argparse.Namespace) -> int:
     return 0
 
 
+def _derive_launchd_permission_check_command(
+    launchd_payload: dict[str, object] | None,
+) -> list[str]:
+    """Resolve a check-permissions command that matches launchd runtime context."""
+    default_command = ["mflow", "check-permissions"]
+    if not isinstance(launchd_payload, dict):
+        return default_command
+
+    program_args = launchd_payload.get("ProgramArguments")
+    if not isinstance(program_args, list) or not program_args:
+        return default_command
+
+    resolved_parts = [str(part) for part in program_args]
+    if "run" in resolved_parts:
+        run_index = resolved_parts.index("run")
+        prefix = resolved_parts[:run_index]
+        if prefix:
+            return [*prefix, "check-permissions"]
+
+    if resolved_parts:
+        return [resolved_parts[0], "check-permissions"]
+    return default_command
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     from moonshine_flow.transcriber import MoonshineTranscriber
 
@@ -175,6 +200,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     out_log_path, err_log_path = launch_agent_log_paths()
     if launchd_payload is None:
         print(f"LaunchAgent plist: MISSING ({launch_agent_path()})")
+        print("Install LaunchAgent: mflow install-launch-agent")
     else:
         print(f"LaunchAgent plist: FOUND ({launch_agent_path()})")
         print(f"LaunchAgent label: {launchd_payload.get('Label', 'UNKNOWN')}")
@@ -203,6 +229,26 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     print("Permissions:", "OK" if report.all_granted else "INCOMPLETE")
     if not report.all_granted:
         print(format_permission_guidance(report))
+
+    if getattr(args, "launchd_check", False):
+        launchd_command = _derive_launchd_permission_check_command(launchd_payload)
+        probe = check_permissions_in_launchd_context(command=launchd_command)
+        if probe.report is not None:
+            launchd_report = probe.report
+            print("Launchd permissions:", "OK" if launchd_report.all_granted else "INCOMPLETE")
+            if not launchd_report.all_granted:
+                print(f"Launchd missing permissions: {', '.join(launchd_report.missing)}")
+            if set(launchd_report.missing) != set(report.missing):
+                print(
+                    "Permission mismatch detected between terminal and launchd contexts. "
+                    "Grant permissions for the recommended target above."
+                )
+        else:
+            print("Launchd permissions: ERROR")
+            if probe.error:
+                print(f"Launchd check error: {probe.error}")
+            if probe.stderr:
+                print(f"Launchd check stderr: {probe.stderr}")
 
     if platform.system() == "Darwin" and os_machine == "arm64" and py_machine != "arm64":
         print(
@@ -237,6 +283,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     doctor_parser = subparsers.add_parser("doctor", help="Show runtime diagnostics")
     doctor_parser.add_argument("--config", default=None, help="Path to config TOML")
+    doctor_parser.add_argument(
+        "--launchd-check",
+        action="store_true",
+        help="Compare permission status in launchd context via launchctl asuser",
+    )
     doctor_parser.set_defaults(func=cmd_doctor)
 
     install_parser = subparsers.add_parser("install-launch-agent", help="Install launchd agent")
