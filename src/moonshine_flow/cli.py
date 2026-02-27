@@ -10,6 +10,7 @@ import sys
 from importlib.util import find_spec
 from pathlib import Path
 
+from moonshine_flow import __version__
 from moonshine_flow.config import default_config_path, load_config
 from moonshine_flow.launchd import install_launch_agent, launch_agent_path, uninstall_launch_agent
 from moonshine_flow.logging_setup import configure_logging
@@ -158,6 +159,12 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="moonshine-flow")
+    parser.add_argument(
+        "-v",
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     run_parser = subparsers.add_parser("run", help="Run background daemon")

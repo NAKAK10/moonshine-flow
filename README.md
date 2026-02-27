@@ -26,6 +26,18 @@ Required macOS permissions:
 
 Settings location: `System Settings -> Privacy & Security`
 
+## Command Reference
+| Command | Description |
+| --- | --- |
+| `moonshine-flow -v` | Show version and exit. |
+| `moonshine-flow --version` | Show version and exit. |
+| `moonshine-flow run` | Run the background daemon. |
+| `moonshine-flow doctor` | Print runtime diagnostics and permission status. |
+| `moonshine-flow check-permissions` | Check required macOS permissions without prompting. |
+| `moonshine-flow check-permissions --request` | Prompt for missing permissions where possible and show status. |
+| `moonshine-flow install-launch-agent` | Install the launchd agent for auto-start at login. |
+| `moonshine-flow uninstall-launch-agent` | Remove the launchd agent. |
+
 ## Features
 - Recording trigger via global key monitor
 - Speech recognition with Moonshine (`moonshine-voice`)

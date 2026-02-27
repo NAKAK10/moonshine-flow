@@ -1,4 +1,6 @@
-from moonshine_flow import cli
+import pytest
+
+from moonshine_flow import __version__, cli
 
 
 def test_has_moonshine_backend_true(monkeypatch) -> None:
@@ -25,3 +27,23 @@ def test_check_permissions_parser_has_request_flag() -> None:
     parser = cli.build_parser()
     args = parser.parse_args(["check-permissions", "--request"])
     assert args.request is True
+
+
+def test_parser_version_long_flag_outputs_version(capsys) -> None:
+    parser = cli.build_parser()
+    parser.prog = "moonshine-flow"
+    with pytest.raises(SystemExit) as exc_info:
+        parser.parse_args(["--version"])
+    captured = capsys.readouterr()
+    assert exc_info.value.code == 0
+    assert captured.out.strip() == f"moonshine-flow {__version__}"
+
+
+def test_parser_version_short_flag_outputs_version(capsys) -> None:
+    parser = cli.build_parser()
+    parser.prog = "moonshine-flow"
+    with pytest.raises(SystemExit) as exc_info:
+        parser.parse_args(["-v"])
+    captured = capsys.readouterr()
+    assert exc_info.value.code == 0
+    assert captured.out.strip() == f"moonshine-flow {__version__}"

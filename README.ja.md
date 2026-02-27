@@ -26,6 +26,18 @@ tap や Homebrew 環境起因でインストール失敗する場合は、次を
 
 設定場所: `System Settings -> Privacy & Security`
 
+## コマンド一覧
+| コマンド | 説明 |
+| --- | --- |
+| `moonshine-flow -v` | バージョンを表示して終了します。 |
+| `moonshine-flow --version` | バージョンを表示して終了します。 |
+| `moonshine-flow run` | バックグラウンドデーモンを起動します。 |
+| `moonshine-flow doctor` | ランタイム診断と権限状態を表示します。 |
+| `moonshine-flow check-permissions` | macOS 権限の状態を確認します（プロンプトなし）。 |
+| `moonshine-flow check-permissions --request` | 可能な範囲で不足権限の許可を要求し、状態を表示します。 |
+| `moonshine-flow install-launch-agent` | ログイン時自動起動用の launchd エージェントをインストールします。 |
+| `moonshine-flow uninstall-launch-agent` | launchd エージェントを削除します。 |
+
 ## できること
 - グローバルキー監視で録音トリガー
 - Moonshine (`moonshine-voice`) で音声認識
