@@ -13,6 +13,7 @@ from importlib.util import find_spec
 from pathlib import Path
 
 from moonshine_flow.app_bundle import (
+    APP_BUNDLE_IDENTIFIER,
     app_bundle_executable_path,
     default_app_bundle_path,
     get_app_bundle_codesign_info,
@@ -41,6 +42,7 @@ from moonshine_flow.permissions import (
     request_input_monitoring_permission,
     request_microphone_permission,
     request_all_permissions,
+    reset_app_bundle_tcc,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -184,10 +186,20 @@ def cmd_install_launch_agent(args: argparse.Namespace) -> int:
         bundle_path = install_app_bundle_from_env()
         if bundle_path is not None:
             print(f"Installed app bundle: {bundle_path}")
-            print(
-                "Note: macOS permissions are still managed by user action in "
-                "System Settings -> Privacy & Security."
-            )
+            tcc_reset_ok = reset_app_bundle_tcc(APP_BUNDLE_IDENTIFIER)
+            if tcc_reset_ok:
+                print(
+                    "TCC permissions reset for MoonshineFlow.app. "
+                    "Re-grant Accessibility and Input Monitoring in "
+                    "System Settings -> Privacy & Security."
+                )
+            else:
+                print(
+                    "Warning: could not reset TCC permissions automatically. "
+                    "If Accessibility or Input Monitoring appear stale, "
+                    "remove and re-add MoonshineFlow manually in System Settings.",
+                    file=sys.stderr,
+                )
 
     permission_check_command = [*resolve_launch_agent_program_prefix(), "check-permissions"]
     if args.request_permissions:

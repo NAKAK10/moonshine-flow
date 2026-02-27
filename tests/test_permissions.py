@@ -12,6 +12,7 @@ from moonshine_flow.permissions import (
     recommended_permission_target,
     request_accessibility_permission,
     request_all_permissions,
+    reset_app_bundle_tcc,
 )
 
 
@@ -279,3 +280,53 @@ def test_check_permissions_in_launchd_context_reports_parse_error(monkeypatch) -
     assert probe.command == ["mflow", "check-permissions"]
     assert probe.stdout == "unexpected output"
     assert probe.stderr == "trace"
+
+
+def test_reset_app_bundle_tcc_calls_tccutil_for_both_services(monkeypatch) -> None:
+    """reset_app_bundle_tcc must invoke tccutil for Accessibility and ListenEvent."""
+    import moonshine_flow.permissions as perms_mod
+
+    monkeypatch.setattr(perms_mod.shutil, "which", lambda cmd: f"/usr/bin/{cmd}")
+
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, *, check, capture_output, text):
+        calls.append(cmd)
+        return SimpleNamespace(returncode=0, stderr="")
+
+    monkeypatch.setattr(perms_mod.subprocess, "run", fake_run)
+
+    result = reset_app_bundle_tcc("com.example.app")
+
+    assert result is True
+    services = [c[2] for c in calls]  # tccutil reset <SERVICE> <bundle>
+    assert "Accessibility" in services
+    assert "ListenEvent" in services
+    assert all(c[3] == "com.example.app" for c in calls)
+
+
+def test_reset_app_bundle_tcc_returns_false_when_tccutil_missing(monkeypatch) -> None:
+    """reset_app_bundle_tcc returns False when tccutil is not on PATH."""
+    import moonshine_flow.permissions as perms_mod
+
+    monkeypatch.setattr(perms_mod.shutil, "which", lambda _cmd: None)
+
+    result = reset_app_bundle_tcc("com.example.app")
+
+    assert result is False
+
+
+def test_reset_app_bundle_tcc_returns_false_when_all_calls_fail(monkeypatch) -> None:
+    """reset_app_bundle_tcc returns False when every tccutil call exits non-zero."""
+    import moonshine_flow.permissions as perms_mod
+
+    monkeypatch.setattr(perms_mod.shutil, "which", lambda cmd: f"/usr/bin/{cmd}")
+    monkeypatch.setattr(
+        perms_mod.subprocess,
+        "run",
+        lambda *_a, **_kw: SimpleNamespace(returncode=1, stderr="error"),
+    )
+
+    result = reset_app_bundle_tcc("com.example.app")
+
+    assert result is False

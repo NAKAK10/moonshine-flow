@@ -1001,3 +1001,87 @@ def test_cmd_doctor_launchd_check_shows_codesign_info(
     assert "App bundle CDHash: abc123def456" in captured.out
     assert "App bundle Identifier: com.moonshineflow.app" in captured.out
     assert "App bundle executable mtime:" in captured.out
+
+
+def test_cmd_install_launch_agent_resets_tcc_when_bundle_installed(
+    monkeypatch, capsys
+) -> None:
+    """install-launch-agent calls reset_app_bundle_tcc when app bundle is installed."""
+    monkeypatch.setattr(cli, "_resolve_config_path", lambda _: Path("/tmp/config.toml"))
+    monkeypatch.setattr(cli, "load_config", lambda _: object())
+    monkeypatch.setattr(
+        cli,
+        "install_app_bundle_from_env",
+        lambda _path=None: Path("/tmp/MoonshineFlow.app"),
+    )
+    monkeypatch.setattr(cli, "resolve_launch_agent_program_prefix", lambda: ["/tmp/mflow"])
+    monkeypatch.setattr(
+        cli,
+        "check_permissions_in_launchd_context",
+        lambda *, command: LaunchdPermissionProbe(
+            ok=True,
+            command=command,
+            report=PermissionReport(microphone=True, accessibility=True, input_monitoring=True),
+        ),
+    )
+    monkeypatch.setattr(cli, "install_launch_agent", lambda _: Path("/tmp/agent.plist"))
+
+    tcc_reset_calls: list[str] = []
+    monkeypatch.setattr(
+        cli,
+        "reset_app_bundle_tcc",
+        lambda bundle_id: tcc_reset_calls.append(bundle_id) or True,
+    )
+
+    args = argparse.Namespace(
+        config=None,
+        request_permissions=True,
+        allow_missing_permissions=False,
+        verbose_bootstrap=False,
+        install_app_bundle=True,
+    )
+    exit_code = cli.cmd_install_launch_agent(args)
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert tcc_reset_calls == ["com.moonshineflow.app"]
+    assert "TCC permissions reset" in captured.out
+    assert "Re-grant Accessibility and Input Monitoring" in captured.out
+
+
+def test_cmd_install_launch_agent_warns_when_tcc_reset_fails(
+    monkeypatch, capsys
+) -> None:
+    """install-launch-agent prints a warning to stderr when TCC reset fails, but continues."""
+    monkeypatch.setattr(cli, "_resolve_config_path", lambda _: Path("/tmp/config.toml"))
+    monkeypatch.setattr(cli, "load_config", lambda _: object())
+    monkeypatch.setattr(
+        cli,
+        "install_app_bundle_from_env",
+        lambda _path=None: Path("/tmp/MoonshineFlow.app"),
+    )
+    monkeypatch.setattr(cli, "resolve_launch_agent_program_prefix", lambda: ["/tmp/mflow"])
+    monkeypatch.setattr(
+        cli,
+        "check_permissions_in_launchd_context",
+        lambda *, command: LaunchdPermissionProbe(
+            ok=True,
+            command=command,
+            report=PermissionReport(microphone=True, accessibility=True, input_monitoring=True),
+        ),
+    )
+    monkeypatch.setattr(cli, "install_launch_agent", lambda _: Path("/tmp/agent.plist"))
+    monkeypatch.setattr(cli, "reset_app_bundle_tcc", lambda _bundle_id: False)
+
+    args = argparse.Namespace(
+        config=None,
+        request_permissions=True,
+        allow_missing_permissions=False,
+        verbose_bootstrap=False,
+        install_app_bundle=True,
+    )
+    exit_code = cli.cmd_install_launch_agent(args)
+
+    captured = capsys.readouterr()
+    assert exit_code == 0  # install should not be aborted
+    assert "could not reset TCC permissions" in captured.err

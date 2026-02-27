@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import platform
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -356,6 +357,42 @@ def recommended_permission_target(executable: Path | None = None) -> Path:
     if python_app is not None:
         return _prefer_homebrew_opt_path(python_app)
     return _prefer_homebrew_opt_path(resolved_executable)
+
+
+def reset_app_bundle_tcc(bundle_identifier: str) -> bool:
+    """Reset TCC entries for *bundle_identifier* so macOS prompts for re-grant.
+
+    Resets both Accessibility and Input Monitoring (ListenEvent) via ``tccutil``.
+    Returns True when at least one reset succeeded, False otherwise.
+    Best-effort: never raises.
+    """
+    tccutil = shutil.which("tccutil")
+    if not tccutil:
+        return False
+
+    _TCC_SERVICES = ("Accessibility", "ListenEvent")
+    any_ok = False
+    for service in _TCC_SERVICES:
+        try:
+            result = subprocess.run(
+                [tccutil, "reset", service, bundle_identifier],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode == 0:
+                any_ok = True
+                LOGGER.debug("TCC reset OK: service=%s bundle=%s", service, bundle_identifier)
+            else:
+                LOGGER.debug(
+                    "TCC reset failed: service=%s bundle=%s stderr=%s",
+                    service,
+                    bundle_identifier,
+                    result.stderr.strip(),
+                )
+        except OSError as exc:
+            LOGGER.debug("tccutil OSError: %s", exc)
+    return any_ok
 
 
 def format_permission_guidance(report: PermissionReport) -> str:
