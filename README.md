@@ -74,6 +74,11 @@ moonshine-flow uninstall-launch-agent
 
 ## トラブルシュート
 - `bad interpreter` が出る: `moonshine-flow --help` を再実行して自己修復を待つ。解消しない場合は `brew reinstall moonshine-flow`。
+- 最新タグより `brew` の stable が古い:
+  1. `brew update-reset && brew update`
+  2. `brew info moonshine-flow` で `stable` バージョンを確認
+  3. まだ古い場合は tap Formula を確認: `brew cat moonshine-flow | sed -n '1,20p'`
+  4. 暫定回避として `brew reinstall --HEAD moonshine-flow` を使用
 - `incompatible architecture` が出る:
   1. `moonshine-flow doctor` で `OS machine` / `Python machine` を確認。
   2. Apple Silicon なら arm64 toolchain を用意（例: `/opt/homebrew/bin/brew install python@3.11 uv`）。

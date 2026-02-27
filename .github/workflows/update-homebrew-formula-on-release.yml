@@ -3,6 +3,12 @@ name: Update Homebrew Formula On Release
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: "Release tag to publish into Formula (e.g. v0.0.1-beta.8). Empty = latest release."
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -19,20 +25,52 @@ jobs:
       - name: Compute source tarball checksum
         id: source
         env:
-          TAG_NAME: ${{ github.event.release.tag_name }}
           REPOSITORY: ${{ github.repository }}
+          EVENT_TAG_NAME: ${{ github.event.release.tag_name }}
+          INPUT_TAG_NAME: ${{ github.event.inputs.tag_name }}
         run: |
           set -euo pipefail
-          url="https://github.com/${REPOSITORY}/archive/refs/tags/${TAG_NAME}.tar.gz"
-          curl -fL "$url" -o source.tar.gz
+
+          tag_name="${INPUT_TAG_NAME:-}"
+          if [[ -z "${tag_name}" ]]; then
+            tag_name="${EVENT_TAG_NAME:-}"
+          fi
+
+          if [[ -z "${tag_name}" ]]; then
+            echo "No tag provided by event; resolving latest release tag..."
+            tag_name="$(curl -fsSL "https://api.github.com/repos/${REPOSITORY}/releases/latest" \
+              | python -c 'import json,sys; print(json.load(sys.stdin).get("tag_name",""))')"
+          fi
+
+          if [[ -z "${tag_name}" ]]; then
+            echo "Unable to resolve release tag_name." >&2
+            exit 1
+          fi
+          if [[ "${tag_name}" != v* ]]; then
+            echo "Tag must start with 'v': ${tag_name}" >&2
+            exit 1
+          fi
+
+          url="https://github.com/${REPOSITORY}/archive/refs/tags/${tag_name}.tar.gz"
+          curl -fL --retry 5 --retry-delay 2 --retry-all-errors "$url" -o source.tar.gz
           sha256=$(sha256sum source.tar.gz | awk '{print $1}')
-          version="${TAG_NAME#v}"
+          version="${tag_name#v}"
+
+          echo "Resolved release metadata:"
+          echo "  repository=${REPOSITORY}"
+          echo "  tag_name=${tag_name}"
+          echo "  version=${version}"
+          echo "  tarball_url=${url}"
+          echo "  sha256=${sha256}"
+
+          echo "tag_name=$tag_name" >> "$GITHUB_OUTPUT"
           echo "url=$url" >> "$GITHUB_OUTPUT"
           echo "sha256=$sha256" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Update Formula/moonshine-flow.rb
         env:
+          TAG_NAME: ${{ steps.source.outputs.tag_name }}
           URL: ${{ steps.source.outputs.url }}
           SHA256: ${{ steps.source.outputs.sha256 }}
           VERSION: ${{ steps.source.outputs.version }}
@@ -65,12 +103,22 @@ jobs:
           path.write_text(updated, encoding="utf-8")
           PY
 
+          echo "Updated Formula stable block for ${TAG_NAME}:"
+          sed -n '/# stable-release-start/,/# stable-release-end/p' Formula/moonshine-flow.rb
+
       - name: Validate formula syntax
         run: ruby -c Formula/moonshine-flow.rb
 
+      - name: Inspect git state
+        run: |
+          set -euo pipefail
+          git remote -v
+          git status --short
+          git diff -- Formula/moonshine-flow.rb || true
+
       - name: Commit and push if changed
         env:
-          TAG_NAME: ${{ github.event.release.tag_name }}
+          TAG_NAME: ${{ steps.source.outputs.tag_name }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
