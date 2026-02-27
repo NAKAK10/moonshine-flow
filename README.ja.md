@@ -45,7 +45,7 @@ brew install moonshine-flow
 
 最新版（`main`）を入れる場合:
 ```bash
-brew reinstall --HEAD moonshine-flow
+brew install --HEAD moonshine-flow
 ```
 
 更新・削除:
@@ -87,7 +87,7 @@ moonshine-flow uninstall-launch-agent
   1. `brew update-reset && brew update`
   2. `brew info moonshine-flow` で `stable` バージョンを確認
   3. まだ古い場合は tap Formula を確認: `brew cat moonshine-flow | sed -n '1,20p'`
-  4. 暫定回避として `brew reinstall --HEAD moonshine-flow` を使用
+  4. 暫定回避として `brew install --HEAD moonshine-flow` を使用
 - `incompatible architecture` が出る:
   1. `moonshine-flow doctor` で `OS machine` / `Python machine` を確認。
   2. Apple Silicon なら arm64 toolchain を用意（例: `/opt/homebrew/bin/brew install python@3.11 uv`）。
@@ -126,10 +126,11 @@ uv run moonshine-flow doctor
 `OS machine` と `Python machine` が一致していることを確認してください。  
 Apple Silicon で `Python machine: x86_64` の場合は Rosetta 実行です。
 
-4) Moonshine ライブラリのロード確認:
+4) デーモンのスモークテスト:
 ```bash
-uv run python -c "import ctypes, moonshine_voice; from pathlib import Path; lib = Path(moonshine_voice.__file__).resolve().with_name('libmoonshine.dylib'); ctypes.CDLL(str(lib)); print('moonshine dylib ok')"
+uv run moonshine-flow run
 ```
+設定したホットキーを一度押して離し、文字起こしフローを確認したら `Ctrl+C` で停止します。
 
 セットアップ:
 ```bash

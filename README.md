@@ -45,7 +45,7 @@ brew install moonshine-flow
 
 To install the latest (`main`):
 ```bash
-brew reinstall --HEAD moonshine-flow
+brew install --HEAD moonshine-flow
 ```
 
 Update / uninstall:
@@ -87,7 +87,7 @@ Main settings:
   1. `brew update-reset && brew update`
   2. Check `stable` with `brew info moonshine-flow`
   3. If still old, inspect the tap formula: `brew cat moonshine-flow | sed -n '1,20p'`
-  4. Temporary workaround: `brew reinstall --HEAD moonshine-flow`
+  4. Temporary workaround: `brew install --HEAD moonshine-flow`
 - `incompatible architecture` appears:
   1. Check `OS machine` and `Python machine` with `moonshine-flow doctor`.
   2. On Apple Silicon, prepare arm64 toolchain (example: `/opt/homebrew/bin/brew install python@3.11 uv`).
@@ -126,10 +126,11 @@ uv run moonshine-flow doctor
 Confirm `OS machine` and `Python machine` match.  
 If `Python machine: x86_64` on Apple Silicon, it is running under Rosetta.
 
-4) Verify Moonshine library loading:
+4) Run a daemon smoke test:
 ```bash
-uv run python -c "import ctypes, moonshine_voice; from pathlib import Path; lib = Path(moonshine_voice.__file__).resolve().with_name('libmoonshine.dylib'); ctypes.CDLL(str(lib)); print('moonshine dylib ok')"
+uv run moonshine-flow run
 ```
+Press and release the configured hotkey once to verify the transcription flow, then stop with `Ctrl+C`.
 
 Setup:
 ```bash
