@@ -68,7 +68,7 @@ mflow doctor --launchd-check
 ### launch-agent / app コマンド
 | コマンド | 説明 |
 | --- | --- |
-| `moonshine-flow install-launch-agent` | 初回セットアップ用: launchd エージェントをインストールします（既定で不足権限の許可を要求）。 |
+| `moonshine-flow install-launch-agent` | 初回セットアップ用: launchd エージェントをインストールします（既定で launchd 実行対象の権限を確認/要求）。 |
 | `moonshine-flow install-launch-agent --allow-missing-permissions` | 必須権限が不足していても launchd エージェントをインストールします。 |
 | `moonshine-flow install-launch-agent --no-request-permissions` | 権限要求プロンプトを出さず、現在の権限状態だけ確認します。 |
 | `moonshine-flow install-launch-agent --verbose-bootstrap` | インストール中の runtime 自動修復ログを詳細表示します。 |
@@ -137,6 +137,7 @@ moonshine-flow uninstall-launch-agent
 
 補足:
 - `install-launch-agent` は既定で不足権限の許可を要求します。
+- `install-launch-agent` は launchd が実行するのと同じ実行対象で権限確認を行います。
 - `install-launch-agent` は既定で `~/Applications/MoonshineFlow.app` を作成/更新し、launchd の実行コマンドにその実行ファイルを優先して設定します。
 - 必須権限が不足している場合、長押しや貼り付けが不安定になるのを防ぐため、既定ではインストールを中断します。
 - 意図的に継続したい場合だけ `--allow-missing-permissions` を使ってください。
@@ -145,6 +146,7 @@ moonshine-flow uninstall-launch-agent
 - `install-app-bundle` は上級者向けの手動コマンドで、通常運用では不要です。
 - LaunchAgent は `~/Applications/MoonshineFlow.app/Contents/MacOS/MoonshineFlow` を起動し、bootstrap はその同一プロセス識別を維持したまま runtime 依存を読み込みます。
 - 権限はコマンド名ではなく、実行ファイルの実体パス（および署名）単位で管理されます。launchd では `doctor` が示す推奨ターゲットを許可してください。
+- Input Monitoring に `MoonshineFlow` が出ない場合は `moonshine-flow install-launch-agent --request-permissions` を再実行し、`moonshine-flow doctor --launchd-check` で確認してください。
 
 ## 設定ファイル
 デフォルト: `~/.config/moonshine-flow/config.toml`  

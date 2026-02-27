@@ -20,11 +20,13 @@ from moonshine_flow.launchd import (
     launch_agent_log_paths,
     launch_agent_path,
     read_launch_agent_plist,
+    resolve_launch_agent_program_prefix,
     restart_launch_agent,
     uninstall_launch_agent,
 )
 from moonshine_flow.logging_setup import configure_logging
 from moonshine_flow.permissions import (
+    PermissionReport,
     check_all_permissions,
     check_permissions_in_launchd_context,
     format_permission_guidance,
@@ -60,6 +62,42 @@ def _backend_guidance() -> str:
         "Moonshine backend package is missing. "
         "Install dependencies and run `uv sync` again."
     )
+
+
+def _format_command(command: list[str]) -> str:
+    return " ".join(command)
+
+
+def _format_launchd_permission_guidance(
+    report: PermissionReport,
+    *,
+    target_executable: str | None,
+) -> str:
+    lines = [
+        "Missing macOS permissions detected for launchd runtime:",
+        *[f"- {item}" for item in report.missing],
+        "",
+        "Open: System Settings -> Privacy & Security",
+        "Then enable this app in:",
+        "- Accessibility",
+        "- Input Monitoring",
+        "- Microphone",
+    ]
+    if target_executable:
+        lines.extend(
+            [
+                "",
+                f"Launchd target executable: {target_executable}",
+            ]
+        )
+    lines.extend(
+        [
+            "",
+            "If the app does not appear in Input Monitoring, rerun "
+            "`moonshine-flow install-launch-agent --request-permissions`.",
+        ]
+    )
+    return "\n".join(lines)
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -145,15 +183,50 @@ def cmd_install_launch_agent(args: argparse.Namespace) -> int:
                 "System Settings -> Privacy & Security."
             )
 
-    permission_report = (
-        request_all_permissions() if args.request_permissions else check_all_permissions()
-    )
-    if not permission_report.all_granted:
-        guidance = format_permission_guidance(permission_report)
+    permission_check_command = [*resolve_launch_agent_program_prefix(), "check-permissions"]
+    if args.request_permissions:
+        permission_check_command.append("--request")
+    print(f"Launchd permission check command: {_format_command(permission_check_command)}")
+
+    probe = check_permissions_in_launchd_context(command=permission_check_command)
+    if probe.report is None:
+        print(
+            "Could not verify launchd permission state before installing launch agent.",
+            file=sys.stderr,
+        )
+        if probe.error:
+            print(probe.error, file=sys.stderr)
+        if probe.stdout:
+            print(f"Launchd check stdout:\n{probe.stdout}", file=sys.stderr)
+        if probe.stderr:
+            print(f"Launchd check stderr:\n{probe.stderr}", file=sys.stderr)
+        if not args.allow_missing_permissions:
+            print(
+                "\nLaunch agent installation was aborted because launchd permission state "
+                "could not be verified.",
+                file=sys.stderr,
+            )
+            print(
+                "Retry after fixing permission checks, or run with "
+                "`--allow-missing-permissions` to install anyway.",
+                file=sys.stderr,
+            )
+            return 2
+
+        print(
+            "Warning: continuing with unverified permissions because "
+            "`--allow-missing-permissions` was specified.",
+            file=sys.stderr,
+        )
+    elif not probe.report.all_granted:
+        guidance = _format_launchd_permission_guidance(
+            probe.report,
+            target_executable=permission_check_command[0] if permission_check_command else None,
+        )
         if not args.allow_missing_permissions:
             print(guidance, file=sys.stderr)
             print(
-                "\nLaunch agent installation was aborted because missing permissions can "
+                "\nLaunch agent installation was aborted because missing launchd permissions can "
                 "prevent hotkey detection and paste output.",
                 file=sys.stderr,
             )
@@ -333,6 +406,10 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     if should_check_launchd:
         launchd_command = _derive_launchd_permission_check_command(launchd_payload)
         probe = check_permissions_in_launchd_context(command=launchd_command)
+        if probe.command:
+            print(f"Launchd check command: {_format_command(probe.command)}")
+        else:
+            print(f"Launchd check command: {_format_command(launchd_command)}")
         if probe.report is not None:
             launchd_report = probe.report
             print("Launchd permissions:", "OK" if launchd_report.all_granted else "INCOMPLETE")
@@ -353,6 +430,8 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             print("Launchd permissions: ERROR")
             if probe.error:
                 print(f"Launchd check error: {probe.error}")
+            if probe.stdout:
+                print(f"Launchd check stdout: {probe.stdout}")
             if probe.stderr:
                 print(f"Launchd check stderr: {probe.stderr}")
 

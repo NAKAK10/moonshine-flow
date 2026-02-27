@@ -44,6 +44,7 @@ class LaunchdPermissionProbe:
     """Result of permission probing through launchd context."""
 
     ok: bool
+    command: list[str] | None = None
     report: PermissionReport | None = None
     error: str | None = None
     stdout: str | None = None
@@ -86,12 +87,12 @@ def check_permissions_in_launchd_context(
     command: Sequence[str] | None = None,
 ) -> LaunchdPermissionProbe:
     """Run permission check through launchctl asuser to compare launchd context."""
+    command_parts = [str(part) for part in (command or ("mflow", "check-permissions"))]
     if not _is_macos():
         report = check_all_permissions()
-        return LaunchdPermissionProbe(ok=True, report=report)
+        return LaunchdPermissionProbe(ok=True, command=command_parts, report=report)
 
     resolved_uid = uid if uid is not None else os.getuid()
-    command_parts = list(command or ("mflow", "check-permissions"))
     launchctl_command = ["launchctl", "asuser", str(resolved_uid), *command_parts]
 
     try:
@@ -102,7 +103,11 @@ def check_permissions_in_launchd_context(
             text=True,
         )
     except OSError as exc:
-        return LaunchdPermissionProbe(ok=False, error=f"Failed to run launchctl: {exc}")
+        return LaunchdPermissionProbe(
+            ok=False,
+            command=command_parts,
+            error=f"Failed to run launchctl: {exc}",
+        )
 
     stdout_text = process.stdout.strip() or None
     stderr_text = process.stderr.strip() or None
@@ -111,10 +116,11 @@ def check_permissions_in_launchd_context(
     if report is None:
         detail = (
             f"Could not parse permission status from launchd check output "
-            f"(exit={process.returncode})"
+            f"(exit={process.returncode}, command={' '.join(command_parts)})"
         )
         return LaunchdPermissionProbe(
             ok=False,
+            command=command_parts,
             error=detail,
             stdout=stdout_text,
             stderr=stderr_text,
@@ -122,6 +128,7 @@ def check_permissions_in_launchd_context(
 
     return LaunchdPermissionProbe(
         ok=process.returncode in {0, 2},
+        command=command_parts,
         report=report,
         stdout=stdout_text,
         stderr=stderr_text,

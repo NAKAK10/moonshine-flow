@@ -43,6 +43,57 @@ def test_build_launch_agent_prefers_app_bundle_command_when_available(monkeypatc
     ]
 
 
+def test_resolve_launch_agent_program_prefix_prefers_app_bundle_when_available(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        launchd,
+        "resolve_launch_agent_app_command",
+        lambda: [
+            "/tmp/Applications/MoonshineFlow.app/Contents/MacOS/MoonshineFlow",
+            "/tmp/libexec/src/moonshine_flow/homebrew_bootstrap.py",
+            "--libexec",
+            "/tmp/libexec",
+            "--var-dir",
+            "/tmp/var/moonshine-flow",
+            "--python",
+            "/tmp/python3.11",
+            "--uv",
+            "/tmp/uv",
+            "--",
+        ],
+    )
+
+    prefix = launchd.resolve_launch_agent_program_prefix()
+
+    assert prefix == [
+        "/tmp/Applications/MoonshineFlow.app/Contents/MacOS/MoonshineFlow",
+        "/tmp/libexec/src/moonshine_flow/homebrew_bootstrap.py",
+        "--libexec",
+        "/tmp/libexec",
+        "--var-dir",
+        "/tmp/var/moonshine-flow",
+        "--python",
+        "/tmp/python3.11",
+        "--uv",
+        "/tmp/uv",
+        "--",
+    ]
+
+
+def test_resolve_launch_agent_program_prefix_falls_back_to_mflow(monkeypatch) -> None:
+    monkeypatch.setattr(launchd, "resolve_launch_agent_app_command", lambda: None)
+    monkeypatch.setattr(
+        launchd.shutil,
+        "which",
+        lambda name: "/usr/local/bin/mflow" if name == "mflow" else None,
+    )
+
+    prefix = launchd.resolve_launch_agent_program_prefix()
+
+    assert prefix == ["/usr/local/bin/mflow"]
+
+
 def test_build_launch_agent_prefers_mflow_command(monkeypatch) -> None:
     monkeypatch.setattr(launchd, "resolve_launch_agent_app_command", lambda: None)
     monkeypatch.setattr(

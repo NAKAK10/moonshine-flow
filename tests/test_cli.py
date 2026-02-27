@@ -242,10 +242,130 @@ def test_cmd_install_launch_agent_aborts_when_permissions_missing(monkeypatch, c
     monkeypatch.setattr(cli, "_resolve_config_path", lambda _: Path("/tmp/config.toml"))
     monkeypatch.setattr(cli, "load_config", lambda _: object())
     monkeypatch.setattr(cli, "install_app_bundle_from_env", lambda _path=None: None)
+    monkeypatch.setattr(cli, "resolve_launch_agent_program_prefix", lambda: ["/tmp/mflow"])
+    called: dict[str, list[str]] = {}
+
+    def fake_launchd_check(*, command: list[str]) -> LaunchdPermissionProbe:
+        called["command"] = command
+        return LaunchdPermissionProbe(
+            ok=True,
+            command=command,
+            report=PermissionReport(microphone=False, accessibility=True, input_monitoring=True),
+        )
+
+    monkeypatch.setattr(cli, "check_permissions_in_launchd_context", fake_launchd_check)
     monkeypatch.setattr(
         cli,
-        "request_all_permissions",
-        lambda: PermissionReport(microphone=False, accessibility=True, input_monitoring=True),
+        "install_launch_agent",
+        lambda _: (_ for _ in ()).throw(AssertionError("install should not run")),
+    )
+    args = argparse.Namespace(
+        config=None,
+        request_permissions=True,
+        allow_missing_permissions=False,
+        verbose_bootstrap=False,
+        install_app_bundle=True,
+    )
+
+    exit_code = cli.cmd_install_launch_agent(args)
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert called["command"] == ["/tmp/mflow", "check-permissions", "--request"]
+    assert "Launchd permission check command: /tmp/mflow check-permissions --request" in captured.out
+    assert "Launch agent installation was aborted" in captured.err
+    assert "allow-missing-permissions" in captured.err
+
+
+def test_cmd_install_launch_agent_allows_missing_permissions(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(cli, "_resolve_config_path", lambda _: Path("/tmp/config.toml"))
+    monkeypatch.setattr(cli, "load_config", lambda _: object())
+    monkeypatch.setattr(cli, "install_app_bundle_from_env", lambda _path=None: None)
+    monkeypatch.setattr(cli, "resolve_launch_agent_program_prefix", lambda: ["/tmp/mflow"])
+    called: dict[str, list[str]] = {}
+
+    def fake_launchd_check(*, command: list[str]) -> LaunchdPermissionProbe:
+        called["command"] = command
+        return LaunchdPermissionProbe(
+            ok=True,
+            command=command,
+            report=PermissionReport(microphone=False, accessibility=True, input_monitoring=True),
+        )
+
+    monkeypatch.setattr(cli, "check_permissions_in_launchd_context", fake_launchd_check)
+    monkeypatch.setattr(cli, "install_launch_agent", lambda _: Path("/tmp/agent.plist"))
+    args = argparse.Namespace(
+        config=None,
+        request_permissions=True,
+        allow_missing_permissions=True,
+        verbose_bootstrap=False,
+        install_app_bundle=True,
+    )
+
+    exit_code = cli.cmd_install_launch_agent(args)
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert called["command"] == ["/tmp/mflow", "check-permissions", "--request"]
+    assert "continuing with missing permissions" in captured.err
+    assert "Launchd target executable: /tmp/mflow" in captured.err
+    assert "Installed launch agent: /tmp/agent.plist" in captured.out
+
+
+def test_cmd_install_launch_agent_uses_check_permissions_when_request_disabled(
+    monkeypatch,
+    capsys,
+) -> None:
+    monkeypatch.setattr(cli, "_resolve_config_path", lambda _: Path("/tmp/config.toml"))
+    monkeypatch.setattr(cli, "load_config", lambda _: object())
+    monkeypatch.setattr(cli, "install_app_bundle_from_env", lambda _path=None: None)
+    monkeypatch.setattr(cli, "resolve_launch_agent_program_prefix", lambda: ["/tmp/mflow"])
+    called: dict[str, list[str]] = {}
+
+    def fake_launchd_check(*, command: list[str]) -> LaunchdPermissionProbe:
+        called["command"] = command
+        return LaunchdPermissionProbe(
+            ok=True,
+            command=command,
+            report=PermissionReport(microphone=True, accessibility=True, input_monitoring=True),
+        )
+
+    monkeypatch.setattr(cli, "check_permissions_in_launchd_context", fake_launchd_check)
+    monkeypatch.setattr(cli, "install_launch_agent", lambda _: Path("/tmp/agent.plist"))
+    args = argparse.Namespace(
+        config=None,
+        request_permissions=False,
+        allow_missing_permissions=False,
+        verbose_bootstrap=False,
+        install_app_bundle=True,
+    )
+
+    exit_code = cli.cmd_install_launch_agent(args)
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert called["command"] == ["/tmp/mflow", "check-permissions"]
+    assert "Installed launch agent: /tmp/agent.plist" in captured.out
+
+
+def test_cmd_install_launch_agent_aborts_when_launchd_check_parse_fails(
+    monkeypatch,
+    capsys,
+) -> None:
+    monkeypatch.setattr(cli, "_resolve_config_path", lambda _: Path("/tmp/config.toml"))
+    monkeypatch.setattr(cli, "load_config", lambda _: object())
+    monkeypatch.setattr(cli, "install_app_bundle_from_env", lambda _path=None: None)
+    monkeypatch.setattr(cli, "resolve_launch_agent_program_prefix", lambda: ["/tmp/mflow"])
+    monkeypatch.setattr(
+        cli,
+        "check_permissions_in_launchd_context",
+        lambda **_kwargs: LaunchdPermissionProbe(
+            ok=False,
+            command=["/tmp/mflow", "check-permissions", "--request"],
+            error="Could not parse permission status from launchd check output",
+            stdout="some output",
+            stderr="traceback",
+        ),
     )
     monkeypatch.setattr(
         cli,
@@ -264,67 +384,10 @@ def test_cmd_install_launch_agent_aborts_when_permissions_missing(monkeypatch, c
 
     captured = capsys.readouterr()
     assert exit_code == 2
-    assert "Launch agent installation was aborted" in captured.err
-    assert "allow-missing-permissions" in captured.err
-
-
-def test_cmd_install_launch_agent_allows_missing_permissions(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(cli, "_resolve_config_path", lambda _: Path("/tmp/config.toml"))
-    monkeypatch.setattr(cli, "load_config", lambda _: object())
-    monkeypatch.setattr(cli, "install_app_bundle_from_env", lambda _path=None: None)
-    monkeypatch.setattr(
-        cli,
-        "request_all_permissions",
-        lambda: PermissionReport(microphone=False, accessibility=True, input_monitoring=True),
-    )
-    monkeypatch.setattr(cli, "install_launch_agent", lambda _: Path("/tmp/agent.plist"))
-    args = argparse.Namespace(
-        config=None,
-        request_permissions=True,
-        allow_missing_permissions=True,
-        verbose_bootstrap=False,
-        install_app_bundle=True,
-    )
-
-    exit_code = cli.cmd_install_launch_agent(args)
-
-    captured = capsys.readouterr()
-    assert exit_code == 0
-    assert "continuing with missing permissions" in captured.err
-    assert "Installed launch agent: /tmp/agent.plist" in captured.out
-
-
-def test_cmd_install_launch_agent_uses_check_permissions_when_request_disabled(
-    monkeypatch,
-    capsys,
-) -> None:
-    monkeypatch.setattr(cli, "_resolve_config_path", lambda _: Path("/tmp/config.toml"))
-    monkeypatch.setattr(cli, "load_config", lambda _: object())
-    monkeypatch.setattr(cli, "install_app_bundle_from_env", lambda _path=None: None)
-    monkeypatch.setattr(
-        cli,
-        "request_all_permissions",
-        lambda: (_ for _ in ()).throw(AssertionError("request should not run")),
-    )
-    monkeypatch.setattr(
-        cli,
-        "check_all_permissions",
-        lambda: PermissionReport(microphone=True, accessibility=True, input_monitoring=True),
-    )
-    monkeypatch.setattr(cli, "install_launch_agent", lambda _: Path("/tmp/agent.plist"))
-    args = argparse.Namespace(
-        config=None,
-        request_permissions=False,
-        allow_missing_permissions=False,
-        verbose_bootstrap=False,
-        install_app_bundle=True,
-    )
-
-    exit_code = cli.cmd_install_launch_agent(args)
-
-    captured = capsys.readouterr()
-    assert exit_code == 0
-    assert "Installed launch agent: /tmp/agent.plist" in captured.out
+    assert "Could not verify launchd permission state" in captured.err
+    assert "Could not parse permission status from launchd check output" in captured.err
+    assert "Launchd check stdout:" in captured.err
+    assert "Launchd check stderr:" in captured.err
 
 
 def test_cmd_doctor_prints_launch_agent_and_log_paths(monkeypatch, capsys) -> None:

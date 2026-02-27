@@ -68,7 +68,7 @@ mflow doctor --launchd-check
 ### LaunchAgent/App Commands
 | Command | Description |
 | --- | --- |
-| `moonshine-flow install-launch-agent` | One-time setup: install the launchd agent for auto-start at login (requests permissions by default). |
+| `moonshine-flow install-launch-agent` | One-time setup: install the launchd agent for auto-start at login (checks/requests permissions for the launchd target by default). |
 | `moonshine-flow install-launch-agent --allow-missing-permissions` | Install the launchd agent even if required macOS permissions are still missing. |
 | `moonshine-flow install-launch-agent --no-request-permissions` | Skip permission prompt attempts and only check current permission state. |
 | `moonshine-flow install-launch-agent --verbose-bootstrap` | Show detailed runtime recovery logs during launch-agent installation. |
@@ -137,6 +137,7 @@ moonshine-flow uninstall-launch-agent
 
 Notes:
 - `install-launch-agent` requests missing permissions by default.
+- `install-launch-agent` checks permissions using the same executable target that launchd will run.
 - `install-launch-agent` creates/updates `~/Applications/MoonshineFlow.app` by default and prefers that executable for launchd command wiring.
 - If required permissions remain missing, installation is aborted by default to avoid "hotkey works poorly / paste does not happen" states.
 - Use `--allow-missing-permissions` only when you intentionally want to install anyway.
@@ -145,6 +146,7 @@ Notes:
 - `install-app-bundle` is an advanced/manual command and is not required for normal operation.
 - LaunchAgent starts `~/Applications/MoonshineFlow.app/Contents/MacOS/MoonshineFlow`, and bootstrap keeps that process identity while loading runtime dependencies.
 - Permissions are tied to executable path (and code signature), not command alias. For launchd use the recommended target shown by `doctor`.
+- If `MoonshineFlow` does not appear under Input Monitoring, rerun `moonshine-flow install-launch-agent --request-permissions` and then `moonshine-flow doctor --launchd-check`.
 
 ## Config file
 Default: `~/.config/moonshine-flow/config.toml`  

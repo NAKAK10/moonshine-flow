@@ -100,13 +100,18 @@ def _resolve_daemon_command() -> list[str]:
     return [sys.executable, "-m", "moonshine_flow.cli"]
 
 
+def resolve_launch_agent_program_prefix() -> list[str]:
+    """Resolve launch-agent command prefix before CLI subcommand arguments."""
+    return _resolve_daemon_command()
+
+
 def build_launch_agent(config_path: Path) -> dict[str, object]:
     """Build LaunchAgent plist data."""
     stdout_path, stderr_path = launch_agent_log_paths()
     stdout_path.parent.mkdir(parents=True, exist_ok=True)
 
     program_args = [
-        *_resolve_daemon_command(),
+        *resolve_launch_agent_program_prefix(),
         "run",
         "--config",
         str(config_path),

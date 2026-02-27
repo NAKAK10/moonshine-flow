@@ -213,7 +213,11 @@ def test_check_permissions_in_launchd_context_short_circuits_on_non_macos(monkey
 
     probe = check_permissions_in_launchd_context()
 
-    assert probe == LaunchdPermissionProbe(ok=True, report=expected)
+    assert probe == LaunchdPermissionProbe(
+        ok=True,
+        command=["mflow", "check-permissions"],
+        report=expected,
+    )
 
 
 def test_check_permissions_in_launchd_context_parses_permission_output(monkeypatch) -> None:
@@ -245,6 +249,7 @@ def test_check_permissions_in_launchd_context_parses_permission_output(monkeypat
 
     assert called["command"] == ["launchctl", "asuser", "501", "mflow", "check-permissions"]
     assert probe.ok is True
+    assert probe.command == ["mflow", "check-permissions"]
     assert probe.report == PermissionReport(
         microphone=False,
         accessibility=True,
@@ -270,5 +275,7 @@ def test_check_permissions_in_launchd_context_reports_parse_error(monkeypatch) -
     assert probe.report is None
     assert probe.error is not None
     assert "Could not parse permission status" in probe.error
+    assert "command=mflow check-permissions" in probe.error
+    assert probe.command == ["mflow", "check-permissions"]
     assert probe.stdout == "unexpected output"
     assert probe.stderr == "trace"
