@@ -149,12 +149,19 @@ def test_doctor_parser_has_launchd_check_flag() -> None:
     assert args.launchd_check is True
 
 
+def test_install_app_bundle_parser_has_path() -> None:
+    parser = cli.build_parser()
+    args = parser.parse_args(["install-app-bundle", "--path", "/tmp/MoonshineFlow.app"])
+    assert args.path == "/tmp/MoonshineFlow.app"
+
+
 def test_install_launch_agent_parser_defaults() -> None:
     parser = cli.build_parser()
     args = parser.parse_args(["install-launch-agent"])
     assert args.request_permissions is True
     assert args.allow_missing_permissions is False
     assert args.verbose_bootstrap is False
+    assert args.install_app_bundle is True
 
 
 def test_install_launch_agent_parser_allows_no_request_permissions() -> None:
@@ -163,9 +170,16 @@ def test_install_launch_agent_parser_allows_no_request_permissions() -> None:
     assert args.request_permissions is False
 
 
+def test_install_launch_agent_parser_allows_no_install_app_bundle() -> None:
+    parser = cli.build_parser()
+    args = parser.parse_args(["install-launch-agent", "--no-install-app-bundle"])
+    assert args.install_app_bundle is False
+
+
 def test_cmd_install_launch_agent_aborts_when_permissions_missing(monkeypatch, capsys) -> None:
     monkeypatch.setattr(cli, "_resolve_config_path", lambda _: Path("/tmp/config.toml"))
     monkeypatch.setattr(cli, "load_config", lambda _: object())
+    monkeypatch.setattr(cli, "install_app_bundle_from_env", lambda _path=None: None)
     monkeypatch.setattr(
         cli,
         "request_all_permissions",
@@ -181,6 +195,7 @@ def test_cmd_install_launch_agent_aborts_when_permissions_missing(monkeypatch, c
         request_permissions=True,
         allow_missing_permissions=False,
         verbose_bootstrap=False,
+        install_app_bundle=True,
     )
 
     exit_code = cli.cmd_install_launch_agent(args)
@@ -194,6 +209,7 @@ def test_cmd_install_launch_agent_aborts_when_permissions_missing(monkeypatch, c
 def test_cmd_install_launch_agent_allows_missing_permissions(monkeypatch, capsys) -> None:
     monkeypatch.setattr(cli, "_resolve_config_path", lambda _: Path("/tmp/config.toml"))
     monkeypatch.setattr(cli, "load_config", lambda _: object())
+    monkeypatch.setattr(cli, "install_app_bundle_from_env", lambda _path=None: None)
     monkeypatch.setattr(
         cli,
         "request_all_permissions",
@@ -206,6 +222,7 @@ def test_cmd_install_launch_agent_allows_missing_permissions(monkeypatch, capsys
         request_permissions=True,
         allow_missing_permissions=True,
         verbose_bootstrap=False,
+        install_app_bundle=True,
     )
 
     exit_code = cli.cmd_install_launch_agent(args)
@@ -223,6 +240,7 @@ def test_cmd_install_launch_agent_uses_check_permissions_when_request_disabled(
 ) -> None:
     monkeypatch.setattr(cli, "_resolve_config_path", lambda _: Path("/tmp/config.toml"))
     monkeypatch.setattr(cli, "load_config", lambda _: object())
+    monkeypatch.setattr(cli, "install_app_bundle_from_env", lambda _path=None: None)
     monkeypatch.setattr(
         cli,
         "request_all_permissions",
@@ -240,6 +258,7 @@ def test_cmd_install_launch_agent_uses_check_permissions_when_request_disabled(
         request_permissions=False,
         allow_missing_permissions=False,
         verbose_bootstrap=False,
+        install_app_bundle=True,
     )
 
     exit_code = cli.cmd_install_launch_agent(args)
@@ -301,6 +320,26 @@ def test_cmd_doctor_prints_launch_agent_and_log_paths(monkeypatch, capsys) -> No
     assert "Permission target (recommended): /tmp/target.app" in captured.out
     assert "Daemon stdout log: /tmp/daemon.out.log" in captured.out
     assert "Daemon stderr log: /tmp/daemon.err.log" in captured.out
+
+
+def test_cmd_install_app_bundle_succeeds(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(cli, "install_app_bundle_from_env", lambda _path: Path("/tmp/MoonshineFlow.app"))
+
+    exit_code = cli.cmd_install_app_bundle(argparse.Namespace(path="/tmp/MoonshineFlow.app"))
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "Installed app bundle: /tmp/MoonshineFlow.app" in captured.out
+
+
+def test_cmd_install_app_bundle_reports_unavailable_context(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(cli, "install_app_bundle_from_env", lambda _path: None)
+
+    exit_code = cli.cmd_install_app_bundle(argparse.Namespace(path=None))
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert "App bundle install is unavailable in this context" in captured.err
 
 
 def test_latest_launchd_runtime_warning_detects_not_trusted(tmp_path: Path) -> None:

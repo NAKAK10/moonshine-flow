@@ -20,6 +20,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, Sequence
 
+ENV_BOOTSTRAP_SCRIPT = "MOONSHINE_FLOW_BOOTSTRAP_SCRIPT"
+ENV_LIBEXEC = "MOONSHINE_FLOW_LIBEXEC"
+ENV_VAR_DIR = "MOONSHINE_FLOW_VAR_DIR"
+ENV_PYTHON = "MOONSHINE_FLOW_PYTHON"
+ENV_UV = "MOONSHINE_FLOW_UV"
+ENV_DAEMON_PYTHON = "MOONSHINE_FLOW_DAEMON_PYTHON"
+
 
 class RuntimeRepairError(RuntimeError):
     """Raised when runtime recovery fails."""
@@ -47,6 +54,11 @@ class RuntimeCandidate:
     @property
     def python_path(self) -> Path:
         return self.venv_dir / "bin" / "python"
+
+    @property
+    def daemon_python_path(self) -> Path:
+        """Dedicated executable used for daemon launches."""
+        return self.venv_dir / "bin" / "MoonshineFlow"
 
     def is_healthy(self) -> bool:
         python = self.python_path
@@ -417,13 +429,63 @@ class RuntimeManager:
 
     def launch(self, cli_args: Sequence[str]) -> None:
         runtime = self.resolve_runtime()
-        command = runtime.cli_command(cli_args)
+        daemon_python = self._ensure_daemon_python_executable(runtime)
+        command = [str(daemon_python), "-m", "moonshine_flow.cli", *cli_args]
         env = os.environ.copy()
         project_src = self._project_dir / "src"
         if project_src.is_dir():
             existing = env.get("PYTHONPATH", "")
             env["PYTHONPATH"] = f"{project_src}:{existing}" if existing else str(project_src)
+        env[ENV_BOOTSTRAP_SCRIPT] = str(
+            (self._project_dir / "src" / "moonshine_flow" / "homebrew_bootstrap.py").resolve(
+                strict=False
+            )
+        )
+        env[ENV_LIBEXEC] = str(self._project_dir.resolve(strict=False))
+        env[ENV_VAR_DIR] = str(self._state_dir.resolve(strict=False))
+        env[ENV_PYTHON] = str(runtime.toolchain.python_bin.resolve(strict=False))
+        env[ENV_UV] = str(runtime.toolchain.uv_bin.resolve(strict=False))
+        env[ENV_DAEMON_PYTHON] = str(daemon_python.resolve(strict=False))
         os.execve(command[0], command, env)
+
+    @staticmethod
+    def _ensure_daemon_python_executable(runtime: RuntimeCandidate) -> Path:
+        source = runtime.python_path
+        target = runtime.daemon_python_path
+
+        if not source.exists() or not os.access(source, os.X_OK):
+            return source
+
+        try:
+            resolved_source = source.resolve(strict=True)
+        except OSError:
+            resolved_source = source
+
+        try:
+            source_stat = resolved_source.stat()
+        except OSError:
+            return source
+
+        try:
+            target_stat = target.stat()
+            refresh_target = (
+                target_stat.st_size != source_stat.st_size
+                or target_stat.st_mtime_ns < source_stat.st_mtime_ns
+            )
+        except OSError:
+            refresh_target = True
+
+        if refresh_target:
+            try:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(resolved_source, target)
+                target.chmod(target.stat().st_mode | 0o111)
+            except OSError:
+                return source
+
+        if target.exists() and os.access(target, os.X_OK):
+            return target
+        return source
 
     def _resolve_for_toolchain(self, toolchain: Toolchain) -> RuntimeCandidate:
         primary = RuntimeCandidate(

@@ -41,6 +41,7 @@ tap や Homebrew 環境起因でインストール失敗する場合は、次を
 | `moonshine-flow install-launch-agent --allow-missing-permissions` | 必須権限が不足していても launchd エージェントをインストールします。 |
 | `moonshine-flow install-launch-agent --no-request-permissions` | 権限要求プロンプトを出さず、現在の権限状態だけ確認します。 |
 | `moonshine-flow install-launch-agent --verbose-bootstrap` | インストール中の runtime 自動修復ログを詳細表示します。 |
+| `moonshine-flow install-app-bundle` | 現在の Homebrew runtime 文脈から `~/Applications/MoonshineFlow.app` を作成/更新します。 |
 | `moonshine-flow uninstall-launch-agent` | launchd エージェントを削除します。 |
 
 上記コマンドはすべて `mflow` エイリアスでも同様に使えます。
@@ -93,10 +94,12 @@ moonshine-flow uninstall-launch-agent
 
 補足:
 - `install-launch-agent` は既定で不足権限の許可を要求します。
+- `install-launch-agent` は既定で `~/Applications/MoonshineFlow.app` を作成/更新し、launchd の実行コマンドにその実行ファイルを優先して設定します。
 - 必須権限が不足している場合、長押しや貼り付けが不安定になるのを防ぐため、既定ではインストールを中断します。
 - 意図的に継続したい場合だけ `--allow-missing-permissions` を使ってください。
 - runtime 自動修復ログは成功時は最小表示です。`uv sync` の詳細が必要なときだけ `--verbose-bootstrap` を指定してください。
 - インストール成功時に `Permission target (recommended)` が表示されます。macOS 権限設定ではそのパスをそのまま許可してください。
+- runtime bootstrap は daemon を runtime の `bin/` 配下に生成する専用実行ファイル `MoonshineFlow` 経由で起動します。これにより、権限識別が汎用の `python3.11` コマンド名に引きずられにくくなります。
 - macOS の権限ダイアログに `mflow` ではなく `python3.11` が表示される場合があります。権限はコマンド名ではなく、実行ファイルの実体パス（および署名）単位で管理されます。
 
 推奨確認手順:

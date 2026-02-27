@@ -8,6 +8,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from moonshine_flow.app_bundle import resolve_launch_agent_app_command
+
 LAUNCH_AGENT_LABEL = "com.moonshineflow.daemon"
 
 
@@ -43,6 +45,10 @@ def _launchctl(*args: str) -> subprocess.CompletedProcess[str]:
 
 def _resolve_daemon_command() -> list[str]:
     """Resolve command used by LaunchAgent to run the daemon."""
+    app_command = resolve_launch_agent_app_command()
+    if app_command:
+        return app_command
+
     for candidate in ("mflow", "moonshine-flow"):
         resolved = shutil.which(candidate)
         if resolved:

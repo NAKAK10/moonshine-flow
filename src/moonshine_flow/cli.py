@@ -11,6 +11,7 @@ from importlib.metadata import PackageNotFoundError, version as package_version
 from importlib.util import find_spec
 from pathlib import Path
 
+from moonshine_flow.app_bundle import default_app_bundle_path, install_app_bundle_from_env
 from moonshine_flow.config import default_config_path, load_config
 from moonshine_flow.launchd import (
     LAUNCH_AGENT_LABEL,
@@ -129,6 +130,15 @@ def cmd_check_permissions(args: argparse.Namespace) -> int:
 def cmd_install_launch_agent(args: argparse.Namespace) -> int:
     config_path = _resolve_config_path(args.config)
     load_config(config_path)
+    if getattr(args, "install_app_bundle", True):
+        bundle_path = install_app_bundle_from_env()
+        if bundle_path is not None:
+            print(f"Installed app bundle: {bundle_path}")
+            print(
+                "Note: macOS permissions are still managed by user action in "
+                "System Settings -> Privacy & Security."
+            )
+
     permission_report = (
         request_all_permissions() if args.request_permissions else check_all_permissions()
     )
@@ -168,6 +178,20 @@ def cmd_uninstall_launch_agent(args: argparse.Namespace) -> int:
         print(f"Removed launch agent: {launch_agent_path()}")
     else:
         print("Launch agent is not installed.")
+    return 0
+
+
+def cmd_install_app_bundle(args: argparse.Namespace) -> int:
+    app_path = Path(args.path).expanduser() if args.path else default_app_bundle_path()
+    installed = install_app_bundle_from_env(app_path)
+    if installed is None:
+        print(
+            "App bundle install is unavailable in this context. "
+            "Run this via Homebrew-installed `mflow`.",
+            file=sys.stderr,
+        )
+        return 2
+    print(f"Installed app bundle: {installed}")
     return 0
 
 
@@ -354,10 +378,27 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Show detailed runtime bootstrap logs when recovery runs",
     )
+    install_parser.add_argument(
+        "--install-app-bundle",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Create/update ~/Applications/MoonshineFlow.app before installing launchd agent",
+    )
     install_parser.set_defaults(func=cmd_install_launch_agent)
 
     uninstall_parser = subparsers.add_parser("uninstall-launch-agent", help="Remove launchd agent")
     uninstall_parser.set_defaults(func=cmd_uninstall_launch_agent)
+
+    app_bundle_parser = subparsers.add_parser(
+        "install-app-bundle",
+        help="Create or update ~/Applications/MoonshineFlow.app from current runtime",
+    )
+    app_bundle_parser.add_argument(
+        "--path",
+        default=None,
+        help="Custom .app destination path (default: ~/Applications/MoonshineFlow.app)",
+    )
+    app_bundle_parser.set_defaults(func=cmd_install_app_bundle)
 
     return parser
 

@@ -593,3 +593,59 @@ def test_runtime_manager_launch_injects_project_src_into_pythonpath(
     env = captured["env"]
     assert isinstance(env, dict)
     assert env["PYTHONPATH"] == str(project_dir / "src")
+
+
+def test_runtime_manager_launch_uses_dedicated_daemon_executable(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project_dir = tmp_path / "libexec"
+    state_dir = tmp_path / "var"
+    _write_project_files(project_dir)
+
+    manager = RuntimeManager(
+        project_dir=project_dir,
+        state_dir=state_dir,
+        python_bin=tmp_path / "python3.11",
+        uv_bin=tmp_path / "uv",
+        runtime_probe=_FakeProbe(_probe_from_executable),
+        toolchains=[Toolchain("primary", tmp_path / "python3.11", tmp_path / "uv", "arm64")],
+        host_arch="arm64",
+    )
+
+    runtime = RuntimeCandidate(
+        name="recovery-arm64",
+        venv_dir=state_dir / ".venv-arm64",
+        toolchain=Toolchain("primary", tmp_path / "python3.11", tmp_path / "uv", "arm64"),
+        scope="arm64",
+    )
+    _write_executable(runtime.python_path)
+    monkeypatch.setattr(manager, "resolve_runtime", lambda: runtime)
+
+    captured: dict[str, object] = {}
+
+    def fake_execve(path: str, args: list[str], env: dict[str, str]) -> None:
+        captured["path"] = path
+        captured["args"] = args
+        captured["env"] = env
+        raise RuntimeError("exec-called")
+
+    monkeypatch.setattr(bootstrap.os, "execve", fake_execve)
+
+    with pytest.raises(RuntimeError, match="exec-called"):
+        manager.launch(["run"])
+
+    daemon_exec = runtime.daemon_python_path
+    assert daemon_exec.exists()
+    assert captured["path"] == str(daemon_exec)
+    assert captured["args"] == [
+        str(daemon_exec),
+        "-m",
+        "moonshine_flow.cli",
+        "run",
+    ]
+    env = captured["env"]
+    assert isinstance(env, dict)
+    assert env["MOONSHINE_FLOW_LIBEXEC"] == str(project_dir)
+    assert env["MOONSHINE_FLOW_VAR_DIR"] == str(state_dir)
+    assert env["MOONSHINE_FLOW_DAEMON_PYTHON"] == str(daemon_exec)

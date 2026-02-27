@@ -41,6 +41,7 @@ Settings location: `System Settings -> Privacy & Security`
 | `moonshine-flow install-launch-agent --allow-missing-permissions` | Install the launchd agent even if required macOS permissions are still missing. |
 | `moonshine-flow install-launch-agent --no-request-permissions` | Skip permission prompt attempts and only check current permission state. |
 | `moonshine-flow install-launch-agent --verbose-bootstrap` | Show detailed runtime recovery logs during launch-agent installation. |
+| `moonshine-flow install-app-bundle` | Create/update `~/Applications/MoonshineFlow.app` from the current Homebrew runtime context. |
 | `moonshine-flow uninstall-launch-agent` | Remove the launchd agent. |
 
 All commands above are also available via the `mflow` alias.
@@ -93,10 +94,12 @@ moonshine-flow uninstall-launch-agent
 
 Notes:
 - `install-launch-agent` requests missing permissions by default.
+- `install-launch-agent` creates/updates `~/Applications/MoonshineFlow.app` by default and prefers that executable for launchd command wiring.
 - If required permissions remain missing, installation is aborted by default to avoid "hotkey works poorly / paste does not happen" states.
 - Use `--allow-missing-permissions` only when you intentionally want to install anyway.
 - Runtime auto-recovery output is quiet on success; use `--verbose-bootstrap` when you need full `uv sync` logs.
 - On successful install, the CLI prints `Permission target (recommended)`. Use that exact path in macOS permission settings.
+- Runtime bootstrap launches the daemon via a dedicated executable named `MoonshineFlow` under the runtime `bin/` directory, so permission identity is not tied to the generic `python3.11` command name.
 - macOS permission prompts may show `python3.11` instead of `mflow`. Permissions are tied to the exact executable path (and code signature), not just the command name.
 
 Recommended verification flow:
