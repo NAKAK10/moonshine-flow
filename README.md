@@ -1,138 +1,141 @@
 # moonshine-flow
 
-macOS向けの Push-to-talk 文字起こしデーモンです。  
-グローバルホットキーを押している間だけ録音し、離したら Moonshine で文字起こししてアクティブアプリへ貼り付けます。
+A push-to-talk transcription daemon for macOS.  
+It records only while a global hotkey is held, and when released it transcribes with Moonshine and pastes into the active app.
 
-## できること
-- グローバルキー監視で録音トリガー
-- Moonshine (`moonshine-voice`) で音声認識
-- クリップボード + `Cmd+V` で結果を貼り付け
-- `launchd` でログイン時自動起動
+[日本語](./README.ja.md)
 
-## インストール（Homebrew）
-### 最短（推奨）
+## Quickstart
 ```bash
 ./scripts/install_brew.sh
-```
-
-### 手動
-```bash
-brew install moonshine-flow
-```
-
-最新版（`main`）を入れる場合:
-```bash
-brew reinstall --HEAD moonshine-flow
-```
-
-更新・削除:
-```bash
-brew upgrade moonshine-flow
-brew uninstall moonshine-flow
-```
-
-補足:
-- `brew tap` の URL 指定は通常不要です。
-- Homebrew auto-update が原因で失敗する環境では、必要時のみ `HOMEBREW_NO_AUTO_UPDATE=1` を付けてください。
-- ランタイムが壊れた場合は、起動時に `$(brew --prefix)/var/moonshine-flow` 配下を自動修復します。
-
-### アーキテクチャ互換（Apple Silicon / Intel）
-- `moonshine-flow` は起動時に runtime の自己診断を行い、`moonshine_voice/libmoonshine.dylib` の読み込み可否まで検証します。
-- Apple Silicon (`arm64`) で `/usr/local` Homebrew を使っている場合、x86_64 Python runtime と arm64 dylib が衝突することがあります。
-- 衝突時は `$(brew --prefix)/var/moonshine-flow/.venv-<arch>` を再構築し、それでも失敗する場合は `/opt/homebrew` 側の `python@3.11` と `uv` へフォールバックを試行します。
-- `/opt/homebrew` 側に `python@3.11` と `uv` が無い場合は、エラーメッセージに表示された手順に従って導入してください。
-
-## 初期セットアップ
-```bash
 moonshine-flow doctor
 moonshine-flow check-permissions --request
 moonshine-flow run
 ```
 
-必要な macOS 権限:
+Required macOS permissions:
 - Microphone
 - Accessibility
 - Input Monitoring
 
-設定場所: `System Settings -> Privacy & Security`
+Settings location: `System Settings -> Privacy & Security`
 
-## launchd 自動起動
+## Features
+- Recording trigger via global key monitor
+- Speech recognition with Moonshine (`moonshine-voice`)
+- Paste transcribed text via clipboard + `Cmd+V`
+- Auto-start at login with `launchd`
+
+## Installation (Homebrew)
+### Fast path (recommended)
+```bash
+./scripts/install_brew.sh
+```
+
+### Manual
+```bash
+brew install moonshine-flow
+```
+
+To install the latest (`main`):
+```bash
+brew reinstall --HEAD moonshine-flow
+```
+
+Update / uninstall:
+```bash
+brew upgrade moonshine-flow
+brew uninstall moonshine-flow
+```
+
+Notes:
+- In most cases, you do not need to specify a `brew tap` URL.
+- If Homebrew auto-update causes failures in your environment, add `HOMEBREW_NO_AUTO_UPDATE=1` only when needed.
+- If the runtime is broken, startup will attempt an auto-repair under `$(brew --prefix)/var/moonshine-flow`.
+
+### Architecture compatibility (Apple Silicon / Intel)
+- `moonshine-flow` performs runtime self-diagnostics at startup, including validation that `moonshine_voice/libmoonshine.dylib` can be loaded.
+- On Apple Silicon (`arm64`) with Homebrew under `/usr/local`, an x86_64 Python runtime may conflict with an arm64 dylib.
+- On conflict, it rebuilds `$(brew --prefix)/var/moonshine-flow/.venv-<arch>`. If that still fails, it attempts fallback to `/opt/homebrew` `python@3.11` and `uv`.
+- If `/opt/homebrew` `python@3.11` and `uv` are missing, follow the steps shown in the error message.
+
+## launchd auto-start
 ```bash
 moonshine-flow install-launch-agent
 moonshine-flow uninstall-launch-agent
 ```
 
-## 設定ファイル
-デフォルト: `~/.config/moonshine-flow/config.toml`  
-初回実行時に存在しなければ自動作成されます。
+## Config file
+Default: `~/.config/moonshine-flow/config.toml`  
+If missing, it is created automatically on first run.
 
-主な設定:
-- `hotkey.key`: 録音トリガーキー（既定: `right_cmd`）
+Main settings:
+- `hotkey.key`: Recording trigger key (default: `right_cmd`)
 - `model.size`: `base` / `tiny`
-- `model.language`: `auto` / `ja` / `en` など
+- `model.language`: `auto` / `ja` / `en` / etc.
 - `model.device`: `mps` / `cpu`
 
-## トラブルシュート
-- `bad interpreter` が出る: `moonshine-flow --help` を再実行して自己修復を待つ。解消しない場合は `brew reinstall moonshine-flow`。
-- 最新タグより `brew` の stable が古い:
+## Troubleshooting
+- `bad interpreter`: rerun `moonshine-flow --help` and wait for auto-repair. If it still fails, run `brew reinstall moonshine-flow`.
+- Homebrew `stable` is older than the latest tag:
   1. `brew update-reset && brew update`
-  2. `brew info moonshine-flow` で `stable` バージョンを確認
-  3. まだ古い場合は tap Formula を確認: `brew cat moonshine-flow | sed -n '1,20p'`
-  4. 暫定回避として `brew reinstall --HEAD moonshine-flow` を使用
-- `incompatible architecture` が出る:
-  1. `moonshine-flow doctor` で `OS machine` / `Python machine` を確認。
-  2. Apple Silicon なら arm64 toolchain を用意（例: `/opt/homebrew/bin/brew install python@3.11 uv`）。
-  3. `brew reinstall moonshine-flow` 後に再実行。
-- 貼り付けできない: Accessibility 許可を確認。
-- ホットキーが反応しない: Input Monitoring 許可を確認。
-- 録音できない: Microphone 許可を確認。
+  2. Check `stable` with `brew info moonshine-flow`
+  3. If still old, inspect the tap formula: `brew cat moonshine-flow | sed -n '1,20p'`
+  4. Temporary workaround: `brew reinstall --HEAD moonshine-flow`
+- `incompatible architecture` appears:
+  1. Check `OS machine` and `Python machine` with `moonshine-flow doctor`.
+  2. On Apple Silicon, prepare arm64 toolchain (example: `/opt/homebrew/bin/brew install python@3.11 uv`).
+  3. Reinstall and retry: `brew reinstall moonshine-flow`.
+- Cannot paste: verify Accessibility permission.
+- Hotkey not detected: verify Input Monitoring permission.
+- Cannot record: verify Microphone permission.
 
-## 開発参加（最小）
-前提:
-- macOS（Apple Silicon / arm64）
+## Development (minimal)
+Prerequisites:
+- macOS (Apple Silicon / arm64)
 - Python 3.11
 - `uv`
 
-### clone 後の環境確認（Python）
+### Environment check after clone (Python)
 ```bash
 git clone https://github.com/NAKAK10/moonshine-flow.git
 cd moonshine-flow
 ```
 
-1) Python バージョンとアーキ確認:
+1) Check Python version and architecture:
 ```bash
 python3.11 -V
 python3.11 -c "import platform; print(platform.machine())"
 ```
 
-2) 依存インストール:
+2) Install dependencies:
 ```bash
 uv sync --extra dev
 ```
 
-3) ランタイム診断:
+3) Run runtime diagnostics:
 ```bash
 uv run moonshine-flow doctor
 ```
-`OS machine` と `Python machine` が一致していることを確認してください。  
-Apple Silicon で `Python machine: x86_64` の場合は Rosetta 実行です。
+Confirm `OS machine` and `Python machine` match.  
+If `Python machine: x86_64` on Apple Silicon, it is running under Rosetta.
 
-4) Moonshine ライブラリのロード確認:
+4) Verify Moonshine library loading:
 ```bash
 uv run python -c "import ctypes, moonshine_voice; from pathlib import Path; lib = Path(moonshine_voice.__file__).resolve().with_name('libmoonshine.dylib'); ctypes.CDLL(str(lib)); print('moonshine dylib ok')"
 ```
 
-セットアップ:
+Setup:
 ```bash
 uv sync --extra dev
 ```
 
-テスト:
+Tests:
 ```bash
 uv run pytest
 ```
 
-変更時に最低限見るファイル:
-- `src/moonshine_flow/cli.py`（CLI）
-- `src/moonshine_flow/homebrew_bootstrap.py`（Homebrew 起動・自己修復）
-- `Formula/moonshine-flow.rb`（配布定義）
+Minimum files to check when making changes:
+- `src/moonshine_flow/cli.py` (CLI)
+- `src/moonshine_flow/homebrew_bootstrap.py` (Homebrew startup / self-repair)
+- `Formula/moonshine-flow.rb` (distribution formula)
