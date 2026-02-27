@@ -168,7 +168,6 @@ def cmd_install_launch_agent(args: argparse.Namespace) -> int:
 
     plist_path = install_launch_agent(config_path)
     print(f"Installed launch agent: {plist_path}")
-    print(f"Permission target (recommended): {recommended_permission_target()}")
     return 0
 
 

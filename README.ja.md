@@ -43,7 +43,8 @@ mflow run
 ```bash
 mflow install-launch-agent
 ```
-2. macOS 設定で `Permission target (recommended)` に表示されたパスへ権限を許可する。
+2. macOS 設定で次のパスへ権限を許可する。  
+`~/Applications/MoonshineFlow.app/Contents/MacOS/MoonshineFlow`
 3. 権限を変更した後に launch-agent を再起動する:
 ```bash
 mflow restart-launch-agent
@@ -140,7 +141,6 @@ moonshine-flow uninstall-launch-agent
 - 必須権限が不足している場合、長押しや貼り付けが不安定になるのを防ぐため、既定ではインストールを中断します。
 - 意図的に継続したい場合だけ `--allow-missing-permissions` を使ってください。
 - runtime 自動修復ログは成功時は最小表示です。`uv sync` の詳細が必要なときだけ `--verbose-bootstrap` を指定してください。
-- インストール成功時に `Permission target (recommended)` が表示されます。macOS 権限設定ではそのパスをそのまま許可してください。
 - System Settings で権限を許可した後は、`mflow restart-launch-agent` を実行して即時反映してください。
 - `install-app-bundle` は上級者向けの手動コマンドで、通常運用では不要です。
 - LaunchAgent は `~/Applications/MoonshineFlow.app/Contents/MacOS/MoonshineFlow` を起動し、bootstrap はその同一プロセス識別を維持したまま runtime 依存を読み込みます。

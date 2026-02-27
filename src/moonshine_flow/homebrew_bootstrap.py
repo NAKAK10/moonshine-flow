@@ -557,9 +557,11 @@ class RuntimeManager:
         raise RuntimeRepairError(self._format_probe_failure(toolchain, probes))
 
     def _runtime_fingerprint(self, toolchain: Toolchain) -> str:
+        resolved_python = toolchain.python_bin.resolve(strict=False)
+        resolved_uv = toolchain.uv_bin.resolve(strict=False)
         return (
             f"{self._fingerprint.build()}|arch={toolchain.arch}"
-            f"|python={toolchain.python_bin}|uv={toolchain.uv_bin}"
+            f"|python={resolved_python}|uv={resolved_uv}"
         )
 
     @staticmethod
@@ -737,6 +739,8 @@ def _discover_toolchains(*, python_bin: Path, uv_bin: Path, host_arch: str) -> l
         opt_uv = Path("/opt/homebrew/opt/uv/bin/uv")
         if opt_python.exists() and opt_uv.exists():
             add_toolchain("opt-homebrew", opt_python, opt_uv)
+
+    toolchains.sort(key=lambda toolchain: 1 if toolchain.arch != host_arch else 0)
 
     return toolchains
 

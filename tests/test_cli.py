@@ -222,7 +222,6 @@ def test_cmd_install_launch_agent_allows_missing_permissions(monkeypatch, capsys
         lambda: PermissionReport(microphone=False, accessibility=True, input_monitoring=True),
     )
     monkeypatch.setattr(cli, "install_launch_agent", lambda _: Path("/tmp/agent.plist"))
-    monkeypatch.setattr(cli, "recommended_permission_target", lambda: Path("/tmp/target.app"))
     args = argparse.Namespace(
         config=None,
         request_permissions=True,
@@ -237,7 +236,6 @@ def test_cmd_install_launch_agent_allows_missing_permissions(monkeypatch, capsys
     assert exit_code == 0
     assert "continuing with missing permissions" in captured.err
     assert "Installed launch agent: /tmp/agent.plist" in captured.out
-    assert "Permission target (recommended): /tmp/target.app" in captured.out
 
 
 def test_cmd_install_launch_agent_uses_check_permissions_when_request_disabled(
@@ -258,7 +256,6 @@ def test_cmd_install_launch_agent_uses_check_permissions_when_request_disabled(
         lambda: PermissionReport(microphone=True, accessibility=True, input_monitoring=True),
     )
     monkeypatch.setattr(cli, "install_launch_agent", lambda _: Path("/tmp/agent.plist"))
-    monkeypatch.setattr(cli, "recommended_permission_target", lambda: Path("/tmp/target.app"))
     args = argparse.Namespace(
         config=None,
         request_permissions=False,
@@ -272,7 +269,6 @@ def test_cmd_install_launch_agent_uses_check_permissions_when_request_disabled(
     captured = capsys.readouterr()
     assert exit_code == 0
     assert "Installed launch agent: /tmp/agent.plist" in captured.out
-    assert "Permission target (recommended): /tmp/target.app" in captured.out
 
 
 def test_cmd_doctor_prints_launch_agent_and_log_paths(monkeypatch, capsys) -> None:

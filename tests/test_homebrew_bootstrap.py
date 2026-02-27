@@ -293,6 +293,42 @@ def test_runtime_manager_falls_back_to_secondary_toolchain(tmp_path: Path) -> No
     assert builder.calls == 2
 
 
+def test_discover_toolchains_prefers_host_arch_first_on_arm64(monkeypatch, tmp_path: Path) -> None:
+    primary_python = tmp_path / "python3.11"
+    primary_uv = tmp_path / "uv"
+    _write_executable(primary_python)
+    _write_executable(primary_uv)
+
+    opt_python = Path("/opt/homebrew/opt/python@3.11/bin/python3.11")
+    opt_uv = Path("/opt/homebrew/opt/uv/bin/uv")
+    real_exists = Path.exists
+
+    def fake_exists(path: Path) -> bool:
+        if str(path) in {str(opt_python), str(opt_uv)}:
+            return True
+        return real_exists(path)
+
+    monkeypatch.setattr(Path, "exists", fake_exists)
+
+    def fake_detect_python_arch(python_bin: Path, default_arch: str) -> str:
+        if python_bin == primary_python:
+            return "x86_64"
+        if python_bin == opt_python:
+            return "arm64"
+        return default_arch
+
+    monkeypatch.setattr(bootstrap, "_detect_python_arch", fake_detect_python_arch)
+
+    discovered = bootstrap._discover_toolchains(
+        python_bin=primary_python,
+        uv_bin=primary_uv,
+        host_arch="arm64",
+    )
+
+    assert [tool.name for tool in discovered] == ["opt-homebrew", "primary"]
+    assert [tool.arch for tool in discovered] == ["arm64", "x86_64"]
+
+
 def test_runtime_builder_requires_metadata_files(tmp_path: Path) -> None:
     project_dir = tmp_path / "libexec"
     _write_project_files(project_dir)

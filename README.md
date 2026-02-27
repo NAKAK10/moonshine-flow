@@ -43,7 +43,8 @@ mflow run
 ```bash
 mflow install-launch-agent
 ```
-2. In macOS settings, grant permissions for the path shown as `Permission target (recommended)`.
+2. In macOS settings, grant permissions for:
+`~/Applications/MoonshineFlow.app/Contents/MacOS/MoonshineFlow`
 3. After permission changes, restart launch agent:
 ```bash
 mflow restart-launch-agent
@@ -140,7 +141,6 @@ Notes:
 - If required permissions remain missing, installation is aborted by default to avoid "hotkey works poorly / paste does not happen" states.
 - Use `--allow-missing-permissions` only when you intentionally want to install anyway.
 - Runtime auto-recovery output is quiet on success; use `--verbose-bootstrap` when you need full `uv sync` logs.
-- On successful install, the CLI prints `Permission target (recommended)`. Use that exact path in macOS permission settings.
 - After granting permissions in System Settings, run `mflow restart-launch-agent` to apply changes immediately.
 - `install-app-bundle` is an advanced/manual command and is not required for normal operation.
 - LaunchAgent starts `~/Applications/MoonshineFlow.app/Contents/MacOS/MoonshineFlow`, and bootstrap keeps that process identity while loading runtime dependencies.
