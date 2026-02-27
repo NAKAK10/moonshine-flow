@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import plistlib
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -40,15 +41,22 @@ def _launchctl(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(["launchctl", *args], text=True, capture_output=True, check=False)
 
 
+def _resolve_daemon_command() -> list[str]:
+    """Resolve command used by LaunchAgent to run the daemon."""
+    for candidate in ("mflow", "moonshine-flow"):
+        resolved = shutil.which(candidate)
+        if resolved:
+            return [resolved]
+    return [sys.executable, "-m", "moonshine_flow.cli"]
+
+
 def build_launch_agent(config_path: Path) -> dict[str, object]:
     """Build LaunchAgent plist data."""
     stdout_path, stderr_path = launch_agent_log_paths()
     stdout_path.parent.mkdir(parents=True, exist_ok=True)
 
     program_args = [
-        sys.executable,
-        "-m",
-        "moonshine_flow.cli",
+        *_resolve_daemon_command(),
         "run",
         "--config",
         str(config_path),
