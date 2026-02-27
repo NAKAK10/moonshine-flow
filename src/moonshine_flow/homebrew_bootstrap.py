@@ -301,13 +301,17 @@ class RuntimeManager:
         self._state_store = state_store or RuntimeStateStore(state_dir)
         self._fingerprint = fingerprint or ProjectFingerprint(project_dir)
         self._runtime_probe = runtime_probe or SubprocessRuntimeProbe()
-        self._toolchains = list(toolchains) or _discover_toolchains(
-            python_bin=python_bin,
-            uv_bin=uv_bin,
-            host_arch=self._host_arch,
-        )
-        if not self._toolchains:
-            self._toolchains = [Toolchain("primary", python_bin, uv_bin, self._host_arch)]
+        if toolchains is None:
+            resolved_toolchains = _discover_toolchains(
+                python_bin=python_bin,
+                uv_bin=uv_bin,
+                host_arch=self._host_arch,
+            )
+        else:
+            resolved_toolchains = list(toolchains)
+        if not resolved_toolchains:
+            resolved_toolchains = [Toolchain("primary", python_bin, uv_bin, self._host_arch)]
+        self._toolchains = resolved_toolchains
 
     def resolve_runtime(self) -> RuntimeCandidate:
         failures: list[str] = []

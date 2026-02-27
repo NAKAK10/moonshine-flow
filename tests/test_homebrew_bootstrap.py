@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import moonshine_flow.homebrew_bootstrap as bootstrap
 from moonshine_flow.homebrew_bootstrap import (
     ProjectFingerprint,
     RuntimeCandidate,
@@ -65,6 +66,66 @@ def test_project_fingerprint_changes_with_lockfile(tmp_path: Path) -> None:
     second = fingerprint.build()
 
     assert first != second
+
+
+def test_runtime_manager_accepts_none_toolchains_without_crash(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project_dir = tmp_path / "libexec"
+    state_dir = tmp_path / "var"
+    discovered = [Toolchain("discovered", tmp_path / "python3.11", tmp_path / "uv", "arm64")]
+    monkeypatch.setattr(bootstrap, "_discover_toolchains", lambda **_: discovered)
+
+    manager = RuntimeManager(
+        project_dir=project_dir,
+        state_dir=state_dir,
+        python_bin=tmp_path / "python3.11",
+        uv_bin=tmp_path / "uv",
+        toolchains=None,
+        host_arch="arm64",
+    )
+
+    assert manager._toolchains == discovered
+
+
+def test_runtime_manager_uses_discovered_toolchains_when_none(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project_dir = tmp_path / "libexec"
+    state_dir = tmp_path / "var"
+    discovered = [Toolchain("discovered", tmp_path / "python3.11", tmp_path / "uv", "arm64")]
+    monkeypatch.setattr(bootstrap, "_discover_toolchains", lambda **_: discovered)
+
+    manager = RuntimeManager(
+        project_dir=project_dir,
+        state_dir=state_dir,
+        python_bin=tmp_path / "python3.11",
+        uv_bin=tmp_path / "uv",
+        toolchains=None,
+        host_arch="arm64",
+    )
+
+    assert manager._toolchains[0].name == "discovered"
+    assert manager._toolchains[0].arch == "arm64"
+
+
+def test_runtime_manager_falls_back_to_primary_when_toolchains_empty(tmp_path: Path) -> None:
+    manager = RuntimeManager(
+        project_dir=tmp_path / "libexec",
+        state_dir=tmp_path / "var",
+        python_bin=tmp_path / "python3.11",
+        uv_bin=tmp_path / "uv",
+        toolchains=[],
+        host_arch="arm64",
+    )
+
+    assert len(manager._toolchains) == 1
+    assert manager._toolchains[0].name == "primary"
+    assert manager._toolchains[0].arch == "arm64"
+    assert manager._toolchains[0].python_bin == tmp_path / "python3.11"
+    assert manager._toolchains[0].uv_bin == tmp_path / "uv"
 
 
 def test_runtime_manager_prefers_primary_arch_runtime(tmp_path: Path) -> None:
