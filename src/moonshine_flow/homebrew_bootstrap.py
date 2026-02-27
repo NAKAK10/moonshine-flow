@@ -249,8 +249,9 @@ class RuntimeBuilder:
         "src/moonshine_flow/cli.py",
     )
 
-    def __init__(self, project_dir: Path) -> None:
+    def __init__(self, project_dir: Path, *, verbose: bool = False) -> None:
         self._project_dir = project_dir
+        self._verbose = verbose
 
     def rebuild(self, runtime: RuntimeCandidate) -> None:
         self._validate_project_layout()
@@ -279,6 +280,7 @@ class RuntimeBuilder:
                 "--active",
             ],
             env=env,
+            quiet_on_success=True,
         )
 
     def _validate_project_layout(self) -> None:
@@ -314,7 +316,17 @@ class RuntimeBuilder:
                 f"{exc}"
             ) from exc
 
-    def _run(self, command: Sequence[str], env: dict[str, str] | None = None) -> None:
+    def _run(
+        self,
+        command: Sequence[str],
+        env: dict[str, str] | None = None,
+        *,
+        quiet_on_success: bool = False,
+    ) -> None:
+        if quiet_on_success and not self._verbose:
+            self._run_quiet(command, env)
+            return
+
         try:
             subprocess.run(command, env=env, check=True)
         except FileNotFoundError as exc:
@@ -324,6 +336,31 @@ class RuntimeBuilder:
             raise RuntimeRepairError(
                 f"Command failed with exit code {exc.returncode}: {cmd_text}"
             ) from exc
+
+    def _run_quiet(self, command: Sequence[str], env: dict[str, str] | None = None) -> None:
+        try:
+            process = subprocess.run(
+                command,
+                env=env,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        except FileNotFoundError as exc:
+            raise RuntimeRepairError(f"Required command is missing: {command[0]}") from exc
+
+        if process.returncode == 0:
+            return
+
+        cmd_text = " ".join(command)
+        details: list[str] = [f"Command failed with exit code {process.returncode}: {cmd_text}"]
+        stdout_text = process.stdout.strip()
+        stderr_text = process.stderr.strip()
+        if stdout_text:
+            details.append(f"stdout:\n{stdout_text}")
+        if stderr_text:
+            details.append(f"stderr:\n{stderr_text}")
+        raise RuntimeRepairError("\n".join(details))
 
 
 class RuntimeManager:
@@ -342,11 +379,12 @@ class RuntimeManager:
         runtime_probe: RuntimeProbe | None = None,
         toolchains: Sequence[Toolchain] | None = None,
         host_arch: str | None = None,
+        verbose_bootstrap: bool = False,
     ) -> None:
         self._project_dir = project_dir
         self._state_dir = state_dir
         self._host_arch = _normalize_arch(host_arch or _detect_host_arch())
-        self._builder = builder or RuntimeBuilder(project_dir)
+        self._builder = builder or RuntimeBuilder(project_dir, verbose=verbose_bootstrap)
         self._state_store = state_store or RuntimeStateStore(state_dir)
         self._fingerprint = fingerprint or ProjectFingerprint(project_dir)
         self._runtime_probe = runtime_probe or SubprocessRuntimeProbe(
@@ -637,6 +675,17 @@ def _is_version_query(cli_args: Sequence[str]) -> bool:
     return all(arg in version_flags for arg in cli_args)
 
 
+def _consume_verbose_bootstrap_flag(cli_args: Sequence[str]) -> tuple[list[str], bool]:
+    filtered: list[str] = []
+    verbose_bootstrap = False
+    for arg in cli_args:
+        if arg == "--verbose-bootstrap":
+            verbose_bootstrap = True
+            continue
+        filtered.append(arg)
+    return filtered, verbose_bootstrap
+
+
 def _resolve_formula_version_from_project_dir(project_dir: Path) -> str | None:
     parts = project_dir.resolve().parts
     for idx, part in enumerate(parts):
@@ -682,6 +731,7 @@ def _resolve_fast_version(project_dir: Path) -> str:
 
 def main(argv: Sequence[str] | None = None) -> int:
     options, cli_args = _parse_bootstrap_args(argv or sys.argv[1:])
+    cli_args, verbose_bootstrap = _consume_verbose_bootstrap_flag(cli_args)
     project_dir = Path(options.libexec)
     if _is_version_query(cli_args):
         print(f"moonshine-flow {_resolve_fast_version(project_dir)}")
@@ -692,6 +742,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         state_dir=Path(options.var_dir),
         python_bin=Path(options.python),
         uv_bin=Path(options.uv),
+        verbose_bootstrap=verbose_bootstrap,
     )
     try:
         manager.launch(cli_args)

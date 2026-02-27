@@ -13,6 +13,7 @@ from moonshine_flow.homebrew_bootstrap import (
     RuntimeRepairError,
     RuntimeStateStore,
     Toolchain,
+    _consume_verbose_bootstrap_flag,
     _parse_bootstrap_args,
 )
 
@@ -317,7 +318,7 @@ def test_runtime_builder_restores_readme_from_prefix(tmp_path: Path, monkeypatch
     builder = RuntimeBuilder(project_dir)
     commands: list[tuple[list[str], dict[str, str] | None]] = []
 
-    def fake_run(command, env=None) -> None:
+    def fake_run(command, env=None, quiet_on_success=False) -> None:
         commands.append((list(command), env))
 
     monkeypatch.setattr(builder, "_run", fake_run)
@@ -343,7 +344,7 @@ def test_runtime_builder_rebuild_runs_when_metadata_present(tmp_path: Path, monk
     builder = RuntimeBuilder(project_dir)
     commands: list[tuple[list[str], dict[str, str] | None]] = []
 
-    def fake_run(command, env=None) -> None:
+    def fake_run(command, env=None, quiet_on_success=False) -> None:
         commands.append((list(command), env))
 
     monkeypatch.setattr(builder, "_run", fake_run)
@@ -364,6 +365,91 @@ def test_runtime_builder_rebuild_runs_when_metadata_present(tmp_path: Path, monk
     assert commands[1][1]["UV_PROJECT"] == str(project_dir)
 
 
+def test_runtime_builder_suppresses_sync_output_by_default(tmp_path: Path, monkeypatch) -> None:
+    project_dir = tmp_path / "libexec"
+    _write_project_files(project_dir)
+    builder = RuntimeBuilder(project_dir)
+
+    calls: list[dict[str, object]] = []
+
+    def fake_subprocess_run(command, **kwargs):
+        calls.append({"command": command, **kwargs})
+        if kwargs.get("capture_output"):
+            return type("P", (), {"returncode": 0, "stdout": "ok", "stderr": ""})()
+        return type("P", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr(bootstrap.subprocess, "run", fake_subprocess_run)
+
+    _write_executable(tmp_path / "python3.11")
+    _write_executable(tmp_path / "uv")
+    runtime = RuntimeCandidate(
+        name="recovery-arm64",
+        venv_dir=tmp_path / "var" / ".venv-arm64",
+        toolchain=Toolchain("primary", tmp_path / "python3.11", tmp_path / "uv", "arm64"),
+        scope="arm64",
+    )
+    builder.rebuild(runtime)
+
+    assert len(calls) == 2
+    assert calls[0].get("capture_output") is None
+    assert calls[1].get("capture_output") is True
+
+
+def test_runtime_builder_sync_failure_includes_captured_output(tmp_path: Path, monkeypatch) -> None:
+    project_dir = tmp_path / "libexec"
+    _write_project_files(project_dir)
+    builder = RuntimeBuilder(project_dir)
+
+    def fake_subprocess_run(command, **kwargs):
+        if kwargs.get("capture_output"):
+            return type("P", (), {"returncode": 1, "stdout": "sync out", "stderr": "sync err"})()
+        return type("P", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr(bootstrap.subprocess, "run", fake_subprocess_run)
+
+    _write_executable(tmp_path / "python3.11")
+    _write_executable(tmp_path / "uv")
+    runtime = RuntimeCandidate(
+        name="recovery-arm64",
+        venv_dir=tmp_path / "var" / ".venv-arm64",
+        toolchain=Toolchain("primary", tmp_path / "python3.11", tmp_path / "uv", "arm64"),
+        scope="arm64",
+    )
+
+    with pytest.raises(RuntimeRepairError, match="sync out"):
+        builder.rebuild(runtime)
+
+
+def test_runtime_builder_verbose_mode_keeps_sync_output_unsuppressed(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project_dir = tmp_path / "libexec"
+    _write_project_files(project_dir)
+    builder = RuntimeBuilder(project_dir, verbose=True)
+
+    calls: list[dict[str, object]] = []
+
+    def fake_subprocess_run(command, **kwargs):
+        calls.append({"command": command, **kwargs})
+        return type("P", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr(bootstrap.subprocess, "run", fake_subprocess_run)
+
+    _write_executable(tmp_path / "python3.11")
+    _write_executable(tmp_path / "uv")
+    runtime = RuntimeCandidate(
+        name="recovery-arm64",
+        venv_dir=tmp_path / "var" / ".venv-arm64",
+        toolchain=Toolchain("primary", tmp_path / "python3.11", tmp_path / "uv", "arm64"),
+        scope="arm64",
+    )
+    builder.rebuild(runtime)
+
+    assert len(calls) == 2
+    assert calls[1].get("capture_output") is None
+
+
 def test_parse_bootstrap_args_preserves_cli_options_after_separator() -> None:
     options, cli_args = _parse_bootstrap_args(
         [
@@ -382,6 +468,14 @@ def test_parse_bootstrap_args_preserves_cli_options_after_separator() -> None:
 
     assert options.libexec == "/tmp/libexec"
     assert cli_args == ["--help"]
+
+
+def test_consume_verbose_bootstrap_flag() -> None:
+    cli_args, verbose = _consume_verbose_bootstrap_flag(
+        ["install-launch-agent", "--verbose-bootstrap", "--config", "/tmp/a.toml"]
+    )
+    assert verbose is True
+    assert cli_args == ["install-launch-agent", "--config", "/tmp/a.toml"]
 
 
 def test_is_version_query() -> None:

@@ -15,14 +15,35 @@ def launch_agent_path() -> Path:
     return Path("~/Library/LaunchAgents/com.moonshineflow.daemon.plist").expanduser()
 
 
+def launch_agent_log_paths() -> tuple[Path, Path]:
+    """Expected daemon log file locations."""
+    log_dir = Path("~/Library/Logs/moonshine-flow").expanduser()
+    return (log_dir / "daemon.out.log", log_dir / "daemon.err.log")
+
+
+def read_launch_agent_plist() -> dict[str, object] | None:
+    """Read installed LaunchAgent plist when present."""
+    plist_path = launch_agent_path()
+    if not plist_path.exists():
+        return None
+    try:
+        with plist_path.open("rb") as fp:
+            payload = plistlib.load(fp)
+    except (OSError, plistlib.InvalidFileException):
+        return None
+    if isinstance(payload, dict):
+        return payload
+    return None
+
+
 def _launchctl(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(["launchctl", *args], text=True, capture_output=True, check=False)
 
 
 def build_launch_agent(config_path: Path) -> dict[str, object]:
     """Build LaunchAgent plist data."""
-    log_dir = Path("~/Library/Logs/moonshine-flow").expanduser()
-    log_dir.mkdir(parents=True, exist_ok=True)
+    stdout_path, stderr_path = launch_agent_log_paths()
+    stdout_path.parent.mkdir(parents=True, exist_ok=True)
 
     program_args = [
         sys.executable,
@@ -38,8 +59,8 @@ def build_launch_agent(config_path: Path) -> dict[str, object]:
         "ProgramArguments": program_args,
         "RunAtLoad": True,
         "KeepAlive": False,
-        "StandardOutPath": str(log_dir / "daemon.out.log"),
-        "StandardErrorPath": str(log_dir / "daemon.err.log"),
+        "StandardOutPath": str(stdout_path),
+        "StandardErrorPath": str(stderr_path),
         "ProcessType": "Background",
     }
 

@@ -36,7 +36,10 @@ tap や Homebrew 環境起因でインストール失敗する場合は、次を
 | `moonshine-flow doctor` | ランタイム診断と権限状態を表示します。 |
 | `moonshine-flow check-permissions` | macOS 権限の状態を確認します（プロンプトなし）。 |
 | `moonshine-flow check-permissions --request` | 可能な範囲で不足権限の許可を要求し、状態を表示します。 |
-| `moonshine-flow install-launch-agent` | ログイン時自動起動用の launchd エージェントをインストールします。 |
+| `moonshine-flow install-launch-agent` | launchd エージェントをインストールします（既定で不足権限の許可を要求）。 |
+| `moonshine-flow install-launch-agent --allow-missing-permissions` | 必須権限が不足していても launchd エージェントをインストールします。 |
+| `moonshine-flow install-launch-agent --no-request-permissions` | 権限要求プロンプトを出さず、現在の権限状態だけ確認します。 |
+| `moonshine-flow install-launch-agent --verbose-bootstrap` | インストール中の runtime 自動修復ログを詳細表示します。 |
 | `moonshine-flow uninstall-launch-agent` | launchd エージェントを削除します。 |
 | `mflow -v` | パッケージバージョンを表示して終了します（`moonshine-flow -v` と同じ）。 |
 | `mflow --version` | パッケージバージョンを表示して終了します（`moonshine-flow --version` と同じ）。 |
@@ -45,6 +48,9 @@ tap や Homebrew 環境起因でインストール失敗する場合は、次を
 | `mflow check-permissions` | macOS 権限の状態を確認します（`moonshine-flow check-permissions` と同じ）。 |
 | `mflow check-permissions --request` | 不足権限の許可を要求します（`moonshine-flow check-permissions --request` と同じ）。 |
 | `mflow install-launch-agent` | launchd エージェントをインストールします（`moonshine-flow install-launch-agent` と同じ）。 |
+| `mflow install-launch-agent --allow-missing-permissions` | 権限不足でもインストールします（`moonshine-flow ... --allow-missing-permissions` と同じ）。 |
+| `mflow install-launch-agent --no-request-permissions` | 権限要求をスキップします（`moonshine-flow ... --no-request-permissions` と同じ）。 |
+| `mflow install-launch-agent --verbose-bootstrap` | runtime 自動修復ログを詳細表示します（`moonshine-flow ... --verbose-bootstrap` と同じ）。 |
 | `mflow uninstall-launch-agent` | launchd エージェントを削除します（`moonshine-flow uninstall-launch-agent` と同じ）。 |
 
 ## できること
@@ -89,8 +95,15 @@ brew uninstall moonshine-flow
 ## launchd 自動起動
 ```bash
 moonshine-flow install-launch-agent
+moonshine-flow install-launch-agent --verbose-bootstrap
 moonshine-flow uninstall-launch-agent
 ```
+
+補足:
+- `install-launch-agent` は既定で不足権限の許可を要求します。
+- 必須権限が不足している場合、長押しや貼り付けが不安定になるのを防ぐため、既定ではインストールを中断します。
+- 意図的に継続したい場合だけ `--allow-missing-permissions` を使ってください。
+- runtime 自動修復ログは成功時は最小表示です。`uv sync` の詳細が必要なときだけ `--verbose-bootstrap` を指定してください。
 
 ## 設定ファイル
 デフォルト: `~/.config/moonshine-flow/config.toml`  
@@ -113,6 +126,9 @@ moonshine-flow uninstall-launch-agent
   1. `moonshine-flow doctor` で `OS machine` / `Python machine` を確認。
   2. Apple Silicon なら arm64 toolchain を用意（例: `/opt/homebrew/bin/brew install python@3.11 uv`）。
   3. `brew reinstall moonshine-flow` 後に再実行。
+- デーモンログの場所が分からない:
+  1. `moonshine-flow doctor` を実行。
+  2. `LaunchAgent plist` / `LaunchAgent program` / `Daemon stdout log` / `Daemon stderr log` を確認。
 - 貼り付けできない: Accessibility 許可を確認。
 - ホットキーが反応しない: Input Monitoring 許可を確認。
 - 録音できない: Microphone 許可を確認。

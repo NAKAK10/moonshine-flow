@@ -36,7 +36,10 @@ Settings location: `System Settings -> Privacy & Security`
 | `moonshine-flow doctor` | Print runtime diagnostics and permission status. |
 | `moonshine-flow check-permissions` | Check required macOS permissions without prompting. |
 | `moonshine-flow check-permissions --request` | Prompt for missing permissions where possible and show status. |
-| `moonshine-flow install-launch-agent` | Install the launchd agent for auto-start at login. |
+| `moonshine-flow install-launch-agent` | Install the launchd agent for auto-start at login (requests permissions by default). |
+| `moonshine-flow install-launch-agent --allow-missing-permissions` | Install the launchd agent even if required macOS permissions are still missing. |
+| `moonshine-flow install-launch-agent --no-request-permissions` | Skip permission prompt attempts and only check current permission state. |
+| `moonshine-flow install-launch-agent --verbose-bootstrap` | Show detailed runtime recovery logs during launch-agent installation. |
 | `moonshine-flow uninstall-launch-agent` | Remove the launchd agent. |
 | `mflow -v` | Show package version and exit (same as `moonshine-flow -v`). |
 | `mflow --version` | Show package version and exit (same as `moonshine-flow --version`). |
@@ -45,6 +48,9 @@ Settings location: `System Settings -> Privacy & Security`
 | `mflow check-permissions` | Check required macOS permissions without prompting (same as `moonshine-flow check-permissions`). |
 | `mflow check-permissions --request` | Prompt for missing permissions where possible (same as `moonshine-flow check-permissions --request`). |
 | `mflow install-launch-agent` | Install the launchd agent for auto-start at login (same as `moonshine-flow install-launch-agent`). |
+| `mflow install-launch-agent --allow-missing-permissions` | Install even if required permissions are missing (same as `moonshine-flow ... --allow-missing-permissions`). |
+| `mflow install-launch-agent --no-request-permissions` | Skip permission prompt attempts (same as `moonshine-flow ... --no-request-permissions`). |
+| `mflow install-launch-agent --verbose-bootstrap` | Show detailed runtime recovery logs (same as `moonshine-flow ... --verbose-bootstrap`). |
 | `mflow uninstall-launch-agent` | Remove the launchd agent (same as `moonshine-flow uninstall-launch-agent`). |
 
 ## Features
@@ -89,8 +95,15 @@ Notes:
 ## launchd auto-start
 ```bash
 moonshine-flow install-launch-agent
+moonshine-flow install-launch-agent --verbose-bootstrap
 moonshine-flow uninstall-launch-agent
 ```
+
+Notes:
+- `install-launch-agent` requests missing permissions by default.
+- If required permissions remain missing, installation is aborted by default to avoid "hotkey works poorly / paste does not happen" states.
+- Use `--allow-missing-permissions` only when you intentionally want to install anyway.
+- Runtime auto-recovery output is quiet on success; use `--verbose-bootstrap` when you need full `uv sync` logs.
 
 ## Config file
 Default: `~/.config/moonshine-flow/config.toml`  
@@ -113,6 +126,9 @@ Main settings:
   1. Check `OS machine` and `Python machine` with `moonshine-flow doctor`.
   2. On Apple Silicon, prepare arm64 toolchain (example: `/opt/homebrew/bin/brew install python@3.11 uv`).
   3. Reinstall and retry: `brew reinstall moonshine-flow`.
+- Not sure where daemon logs are:
+  1. Run `moonshine-flow doctor`.
+  2. Check `LaunchAgent plist`, `LaunchAgent program`, `Daemon stdout log`, and `Daemon stderr log`.
 - Cannot paste: verify Accessibility permission.
 - Hotkey not detected: verify Input Monitoring permission.
 - Cannot record: verify Microphone permission.

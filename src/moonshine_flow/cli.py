@@ -12,7 +12,13 @@ from importlib.util import find_spec
 from pathlib import Path
 
 from moonshine_flow.config import default_config_path, load_config
-from moonshine_flow.launchd import install_launch_agent, launch_agent_path, uninstall_launch_agent
+from moonshine_flow.launchd import (
+    install_launch_agent,
+    launch_agent_log_paths,
+    launch_agent_path,
+    read_launch_agent_plist,
+    uninstall_launch_agent,
+)
 from moonshine_flow.logging_setup import configure_logging
 from moonshine_flow.permissions import (
     check_all_permissions,
@@ -107,6 +113,32 @@ def cmd_check_permissions(args: argparse.Namespace) -> int:
 def cmd_install_launch_agent(args: argparse.Namespace) -> int:
     config_path = _resolve_config_path(args.config)
     load_config(config_path)
+    permission_report = (
+        request_all_permissions() if args.request_permissions else check_all_permissions()
+    )
+    if not permission_report.all_granted:
+        guidance = format_permission_guidance(permission_report)
+        if not args.allow_missing_permissions:
+            print(guidance, file=sys.stderr)
+            print(
+                "\nLaunch agent installation was aborted because missing permissions can "
+                "prevent hotkey detection and paste output.",
+                file=sys.stderr,
+            )
+            print(
+                "Retry after granting permissions, or run with "
+                "`--allow-missing-permissions` to install anyway.",
+                file=sys.stderr,
+            )
+            return 2
+
+        print(
+            "Warning: continuing with missing permissions because "
+            "`--allow-missing-permissions` was specified.",
+            file=sys.stderr,
+        )
+        print(guidance, file=sys.stderr)
+
     plist_path = install_launch_agent(config_path)
     print(f"Installed launch agent: {plist_path}")
     return 0
@@ -136,6 +168,20 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     print(f"OS machine: {os_machine}")
     print(f"Python machine: {py_machine}")
     print(f"Config: {config_path}")
+    launchd_payload = read_launch_agent_plist()
+    out_log_path, err_log_path = launch_agent_log_paths()
+    if launchd_payload is None:
+        print(f"LaunchAgent plist: MISSING ({launch_agent_path()})")
+    else:
+        print(f"LaunchAgent plist: FOUND ({launch_agent_path()})")
+        print(f"LaunchAgent label: {launchd_payload.get('Label', 'UNKNOWN')}")
+        program_args = launchd_payload.get("ProgramArguments")
+        if isinstance(program_args, list) and program_args:
+            print(f"LaunchAgent program: {' '.join(str(part) for part in program_args)}")
+        else:
+            print("LaunchAgent program: UNKNOWN")
+    print(f"Daemon stdout log: {out_log_path}")
+    print(f"Daemon stderr log: {err_log_path}")
 
     for pkg in ("moonshine_voice", "sounddevice", "pynput"):
         print(f"Package {pkg}:", "FOUND" if find_spec(pkg) else "MISSING")
@@ -192,6 +238,22 @@ def build_parser() -> argparse.ArgumentParser:
 
     install_parser = subparsers.add_parser("install-launch-agent", help="Install launchd agent")
     install_parser.add_argument("--config", default=None, help="Path to config TOML")
+    install_parser.add_argument(
+        "--request-permissions",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Request missing macOS permissions before installing launchd agent",
+    )
+    install_parser.add_argument(
+        "--allow-missing-permissions",
+        action="store_true",
+        help="Install launchd agent even when required macOS permissions are missing",
+    )
+    install_parser.add_argument(
+        "--verbose-bootstrap",
+        action="store_true",
+        help="Show detailed runtime bootstrap logs when recovery runs",
+    )
     install_parser.set_defaults(func=cmd_install_launch_agent)
 
     uninstall_parser = subparsers.add_parser("uninstall-launch-agent", help="Remove launchd agent")
