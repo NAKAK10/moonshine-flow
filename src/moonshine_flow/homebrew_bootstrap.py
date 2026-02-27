@@ -231,10 +231,13 @@ class SubprocessRuntimeProbe:
 class RuntimeBuilder:
     """Creates and syncs a runtime virtual environment."""
 
+    _REQUIRED_PROJECT_FILES = ("pyproject.toml", "uv.lock", "README.md")
+
     def __init__(self, project_dir: Path) -> None:
         self._project_dir = project_dir
 
     def rebuild(self, runtime: RuntimeCandidate) -> None:
+        self._validate_project_layout()
         python_bin = runtime.toolchain.python_bin
         uv_bin = runtime.toolchain.uv_bin
         runtime.venv_dir.parent.mkdir(parents=True, exist_ok=True)
@@ -260,6 +263,20 @@ class RuntimeBuilder:
                 "--active",
             ],
             env=env,
+        )
+
+    def _validate_project_layout(self) -> None:
+        missing = [
+            name for name in self._REQUIRED_PROJECT_FILES if not (self._project_dir / name).is_file()
+        ]
+        if not missing:
+            return
+
+        missing_text = ", ".join(missing)
+        raise RuntimeRepairError(
+            "Homebrew runtime project is incomplete: "
+            f"missing {missing_text} under {self._project_dir}. "
+            "Try: brew reinstall moonshine-flow"
         )
 
     def _run(self, command: Sequence[str], env: dict[str, str] | None = None) -> None:

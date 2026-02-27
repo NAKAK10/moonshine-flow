@@ -3,11 +3,14 @@ from __future__ import annotations
 from pathlib import Path
 
 import moonshine_flow.homebrew_bootstrap as bootstrap
+import pytest
 from moonshine_flow.homebrew_bootstrap import (
     ProjectFingerprint,
     RuntimeCandidate,
+    RuntimeBuilder,
     RuntimeManager,
     RuntimeProbeResult,
+    RuntimeRepairError,
     RuntimeStateStore,
     Toolchain,
     _parse_bootstrap_args,
@@ -51,6 +54,13 @@ def _write_executable(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     path.chmod(0o755)
+
+
+def _write_project_files(project_dir: Path) -> None:
+    project_dir.mkdir(parents=True, exist_ok=True)
+    (project_dir / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
+    (project_dir / "uv.lock").write_text("version = 1\n", encoding="utf-8")
+    (project_dir / "README.md").write_text("# demo\n", encoding="utf-8")
 
 
 def test_project_fingerprint_changes_with_lockfile(tmp_path: Path) -> None:
@@ -263,6 +273,51 @@ def test_runtime_manager_falls_back_to_secondary_toolchain(tmp_path: Path) -> No
     assert runtime.name == "recovery-arm64"
     assert runtime.toolchain.name == "opt-homebrew"
     assert builder.calls == 2
+
+
+def test_runtime_builder_requires_metadata_files(tmp_path: Path) -> None:
+    project_dir = tmp_path / "libexec"
+    _write_project_files(project_dir)
+    (project_dir / "README.md").unlink()
+
+    builder = RuntimeBuilder(project_dir)
+    runtime = RuntimeCandidate(
+        name="recovery-arm64",
+        venv_dir=tmp_path / "var" / ".venv-arm64",
+        toolchain=Toolchain("primary", tmp_path / "python3.11", tmp_path / "uv", "arm64"),
+        scope="arm64",
+    )
+
+    with pytest.raises(RuntimeRepairError, match="README.md"):
+        builder.rebuild(runtime)
+
+
+def test_runtime_builder_rebuild_runs_when_metadata_present(tmp_path: Path, monkeypatch) -> None:
+    project_dir = tmp_path / "libexec"
+    _write_project_files(project_dir)
+
+    builder = RuntimeBuilder(project_dir)
+    commands: list[tuple[list[str], dict[str, str] | None]] = []
+
+    def fake_run(command, env=None) -> None:
+        commands.append((list(command), env))
+
+    monkeypatch.setattr(builder, "_run", fake_run)
+
+    runtime = RuntimeCandidate(
+        name="recovery-arm64",
+        venv_dir=tmp_path / "var" / ".venv-arm64",
+        toolchain=Toolchain("primary", tmp_path / "python3.11", tmp_path / "uv", "arm64"),
+        scope="arm64",
+    )
+
+    builder.rebuild(runtime)
+
+    assert len(commands) == 2
+    assert commands[0][0] == [str(tmp_path / "python3.11"), "-m", "venv", str(runtime.venv_dir)]
+    assert commands[1][0][0] == str(tmp_path / "uv")
+    assert commands[1][1] is not None
+    assert commands[1][1]["UV_PROJECT"] == str(project_dir)
 
 
 def test_parse_bootstrap_args_preserves_cli_options_after_separator() -> None:
