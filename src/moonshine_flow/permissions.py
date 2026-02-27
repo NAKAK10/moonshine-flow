@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import logging
+import os
 import platform
+import sys
 from dataclasses import dataclass
+from pathlib import Path
 from threading import Event
 
 LOGGER = logging.getLogger(__name__)
@@ -212,10 +215,36 @@ def request_all_permissions() -> PermissionReport:
     return check_all_permissions()
 
 
+def _resolve_python_app_from_executable(executable: Path) -> Path | None:
+    resolved = executable.resolve(strict=False)
+    marker = "/Frameworks/Python.framework/Versions/"
+    text = str(resolved)
+    if marker not in text:
+        return None
+
+    prefix, suffix = text.split(marker, 1)
+    version = suffix.split("/", 1)[0].strip()
+    if not version:
+        return None
+
+    return (
+        Path(prefix)
+        / "Frameworks"
+        / "Python.framework"
+        / "Versions"
+        / version
+        / "Resources"
+        / "Python.app"
+    )
+
+
 def format_permission_guidance(report: PermissionReport) -> str:
     """Build user-facing setup instructions for missing permissions."""
     if report.all_granted:
         return "All required permissions are granted."
+
+    executable = Path(sys.executable).resolve(strict=False)
+    python_app = _resolve_python_app_from_executable(executable)
 
     lines = [
         "Missing macOS permissions detected:",
@@ -227,6 +256,24 @@ def format_permission_guidance(report: PermissionReport) -> str:
         "- Accessibility",
         "- Input Monitoring",
         "",
-        "After changing permissions, restart moonshine-flow.",
+        f"Current executable: {executable}",
     ]
+
+    if python_app is not None:
+        lines.extend(
+            [
+                f"Python app path: {python_app}",
+                "If daemon and terminal permission states differ, add this Python.app path manually.",
+            ]
+        )
+
+    if os.environ.get("XPC_SERVICE_NAME") == "com.moonshineflow.daemon":
+        lines.append("Detected launchd context: com.moonshineflow.daemon")
+
+    lines.extend(
+        [
+        "",
+        "After changing permissions, restart moonshine-flow.",
+        ]
+    )
     return "\n".join(lines)

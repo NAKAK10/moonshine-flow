@@ -69,7 +69,7 @@ def build_launch_agent(config_path: Path) -> dict[str, object]:
         "KeepAlive": False,
         "StandardOutPath": str(stdout_path),
         "StandardErrorPath": str(stderr_path),
-        "ProcessType": "Background",
+        "ProcessType": "Interactive",
     }
 
 

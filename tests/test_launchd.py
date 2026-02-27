@@ -12,6 +12,7 @@ def test_build_launch_agent_prefers_mflow_command(monkeypatch) -> None:
 
     payload = launchd.build_launch_agent(Path("/tmp/config.toml"))
 
+    assert payload["ProcessType"] == "Interactive"
     assert payload["ProgramArguments"] == [
         "/usr/local/bin/mflow",
         "run",
