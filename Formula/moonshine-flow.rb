@@ -19,9 +19,6 @@ class MoonshineFlow < Formula
 
   def install
     libexec.install buildpath.children
-    libexec.install buildpath/"README.md"
-    libexec.install buildpath/"pyproject.toml"
-    libexec.install buildpath/"uv.lock"
 
     python = Formula["python@3.11"].opt_bin/"python3.11"
     uv = Formula["uv"].opt_bin/"uv"
