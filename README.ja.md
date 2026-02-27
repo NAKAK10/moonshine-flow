@@ -8,10 +8,15 @@ macOS向けの Push-to-talk 文字起こしデーモンです。
 
 ## クイックスタート
 ```bash
-./scripts/install_brew.sh
+brew install moonshine-flow
 moonshine-flow doctor
 moonshine-flow check-permissions --request
 moonshine-flow run
+```
+
+tap や Homebrew 環境起因でインストール失敗する場合は、次を試してください:
+```bash
+./scripts/install_brew.sh
 ```
 
 必要な macOS 権限:

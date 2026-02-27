@@ -8,10 +8,15 @@ It uses Moonshine from the official repository: https://github.com/moonshine-ai/
 
 ## Quickstart
 ```bash
-./scripts/install_brew.sh
+brew install moonshine-flow
 moonshine-flow doctor
 moonshine-flow check-permissions --request
 moonshine-flow run
+```
+
+If install fails because of tap or Homebrew environment issues, try:
+```bash
+./scripts/install_brew.sh
 ```
 
 Required macOS permissions:
