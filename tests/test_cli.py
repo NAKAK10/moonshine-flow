@@ -9,6 +9,114 @@ from moonshine_flow import cli
 from moonshine_flow.permissions import LaunchdPermissionProbe, PermissionReport
 
 
+def test_cmd_run_requests_missing_permissions_in_launchd_context(monkeypatch) -> None:
+    fake_daemon_mod = ModuleType("moonshine_flow.daemon")
+    calls = {"mic": 0, "ax": 0, "im": 0, "stop": 0}
+    permission_states = [
+        PermissionReport(microphone=False, accessibility=False, input_monitoring=False),
+        PermissionReport(microphone=True, accessibility=True, input_monitoring=True),
+    ]
+
+    class FakeDaemon:
+        def __init__(self, _config) -> None:
+            self.transcriber = SimpleNamespace(preflight_model=lambda: "moonshine-voice")
+
+        def run_forever(self) -> None:
+            raise KeyboardInterrupt
+
+        def stop(self) -> None:
+            calls["stop"] += 1
+
+    fake_daemon_mod.MoonshineFlowDaemon = FakeDaemon
+    monkeypatch.setitem(sys.modules, "moonshine_flow.daemon", fake_daemon_mod)
+    monkeypatch.setattr(cli, "_resolve_config_path", lambda _: Path("/tmp/config.toml"))
+    monkeypatch.setattr(
+        cli,
+        "load_config",
+        lambda _: SimpleNamespace(runtime=SimpleNamespace(log_level="INFO")),
+    )
+    monkeypatch.setattr(cli, "configure_logging", lambda _level: None)
+    monkeypatch.setattr(cli, "_has_moonshine_backend", lambda: True)
+    monkeypatch.setattr(cli, "check_all_permissions", lambda: permission_states.pop(0))
+    monkeypatch.setattr(
+        cli,
+        "request_microphone_permission",
+        lambda: calls.__setitem__("mic", calls["mic"] + 1) or True,
+    )
+    monkeypatch.setattr(
+        cli,
+        "request_accessibility_permission",
+        lambda: calls.__setitem__("ax", calls["ax"] + 1) or True,
+    )
+    monkeypatch.setattr(
+        cli,
+        "request_input_monitoring_permission",
+        lambda: calls.__setitem__("im", calls["im"] + 1) or True,
+    )
+    monkeypatch.setenv("XPC_SERVICE_NAME", "com.moonshineflow.daemon")
+
+    exit_code = cli.cmd_run(argparse.Namespace(config=None))
+
+    assert exit_code == 0
+    assert calls["mic"] == 1
+    assert calls["ax"] == 1
+    assert calls["im"] == 1
+    assert calls["stop"] == 1
+
+
+def test_cmd_run_skips_permission_requests_outside_launchd(monkeypatch) -> None:
+    fake_daemon_mod = ModuleType("moonshine_flow.daemon")
+    calls = {"requests": 0, "stop": 0}
+
+    class FakeDaemon:
+        def __init__(self, _config) -> None:
+            self.transcriber = SimpleNamespace(preflight_model=lambda: "moonshine-voice")
+
+        def run_forever(self) -> None:
+            raise KeyboardInterrupt
+
+        def stop(self) -> None:
+            calls["stop"] += 1
+
+    fake_daemon_mod.MoonshineFlowDaemon = FakeDaemon
+    monkeypatch.setitem(sys.modules, "moonshine_flow.daemon", fake_daemon_mod)
+    monkeypatch.setattr(cli, "_resolve_config_path", lambda _: Path("/tmp/config.toml"))
+    monkeypatch.setattr(
+        cli,
+        "load_config",
+        lambda _: SimpleNamespace(runtime=SimpleNamespace(log_level="INFO")),
+    )
+    monkeypatch.setattr(cli, "configure_logging", lambda _level: None)
+    monkeypatch.setattr(cli, "_has_moonshine_backend", lambda: True)
+    monkeypatch.setattr(
+        cli,
+        "check_all_permissions",
+        lambda: PermissionReport(microphone=False, accessibility=False, input_monitoring=False),
+    )
+    monkeypatch.setattr(
+        cli,
+        "request_microphone_permission",
+        lambda: calls.__setitem__("requests", calls["requests"] + 1) or True,
+    )
+    monkeypatch.setattr(
+        cli,
+        "request_accessibility_permission",
+        lambda: calls.__setitem__("requests", calls["requests"] + 1) or True,
+    )
+    monkeypatch.setattr(
+        cli,
+        "request_input_monitoring_permission",
+        lambda: calls.__setitem__("requests", calls["requests"] + 1) or True,
+    )
+    monkeypatch.delenv("XPC_SERVICE_NAME", raising=False)
+
+    exit_code = cli.cmd_run(argparse.Namespace(config=None))
+
+    assert exit_code == 0
+    assert calls["requests"] == 0
+    assert calls["stop"] == 1
+
+
 def test_has_moonshine_backend_true(monkeypatch) -> None:
     monkeypatch.setattr(
         cli,
@@ -193,6 +301,80 @@ def test_cmd_doctor_prints_launch_agent_and_log_paths(monkeypatch, capsys) -> No
     assert "Permission target (recommended): /tmp/target.app" in captured.out
     assert "Daemon stdout log: /tmp/daemon.out.log" in captured.out
     assert "Daemon stderr log: /tmp/daemon.err.log" in captured.out
+
+
+def test_latest_launchd_runtime_warning_detects_not_trusted(tmp_path: Path) -> None:
+    err_log = tmp_path / "daemon.err.log"
+    err_log.write_text(
+        "\n".join(
+            [
+                "2026-02-27 10:00:00,000 INFO Moonshine Flow daemon starting",
+                "2026-02-27 10:00:00,100 WARNING [pynput.keyboard.Listener] This process is not trusted!",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    warning = cli._latest_launchd_runtime_warning(err_log)
+    assert warning is not None
+    assert "not trusted" in warning
+
+
+def test_cmd_doctor_prints_runtime_warning_from_daemon_log(monkeypatch, capsys, tmp_path: Path) -> None:
+    fake_transcriber_mod = ModuleType("moonshine_flow.transcriber")
+
+    class FakeTranscriber:
+        def __init__(self, model_size: str, language: str, device: str) -> None:
+            self._summary = f"{model_size}:{language}:{device}"
+
+        def backend_summary(self) -> str:
+            return self._summary
+
+    fake_transcriber_mod.MoonshineTranscriber = FakeTranscriber
+    monkeypatch.setitem(sys.modules, "moonshine_flow.transcriber", fake_transcriber_mod)
+    monkeypatch.setattr(cli, "_resolve_config_path", lambda _: Path("/tmp/config.toml"))
+    monkeypatch.setattr(
+        cli,
+        "load_config",
+        lambda _: SimpleNamespace(
+            model=SimpleNamespace(size=SimpleNamespace(value="base"), language="ja", device="mps")
+        ),
+    )
+    monkeypatch.setattr(cli, "find_spec", lambda _: object())
+    monkeypatch.setattr(
+        cli,
+        "check_all_permissions",
+        lambda: PermissionReport(microphone=True, accessibility=True, input_monitoring=True),
+    )
+    monkeypatch.setattr(
+        cli,
+        "read_launch_agent_plist",
+        lambda: {
+            "Label": "com.moonshineflow.daemon",
+            "ProgramArguments": ["/usr/bin/python3", "-m", "moonshine_flow.cli", "run"],
+        },
+    )
+    monkeypatch.setattr(cli, "launch_agent_path", lambda: Path("/tmp/com.moonshineflow.daemon.plist"))
+    out_log = tmp_path / "daemon.out.log"
+    err_log = tmp_path / "daemon.err.log"
+    err_log.write_text(
+        "\n".join(
+            [
+                "2026-02-27 10:00:00,000 INFO [moonshine_flow.daemon] Moonshine Flow daemon starting",
+                "2026-02-27 10:00:00,100 WARNING [pynput.keyboard.Listener] This process is not trusted!",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(cli, "launch_agent_log_paths", lambda: (out_log, err_log))
+    monkeypatch.setattr(cli, "recommended_permission_target", lambda: Path("/tmp/target.app"))
+
+    exit_code = cli.cmd_doctor(argparse.Namespace(config=None, launchd_check=False))
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "Launchd runtime status: WARNING" in captured.out
+    assert "not trusted" in captured.out
 
 
 def test_cmd_doctor_prints_install_hint_when_launch_agent_missing(monkeypatch, capsys) -> None:

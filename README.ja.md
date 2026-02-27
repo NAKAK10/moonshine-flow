@@ -97,6 +97,7 @@ moonshine-flow uninstall-launch-agent
 - 意図的に継続したい場合だけ `--allow-missing-permissions` を使ってください。
 - runtime 自動修復ログは成功時は最小表示です。`uv sync` の詳細が必要なときだけ `--verbose-bootstrap` を指定してください。
 - インストール成功時に `Permission target (recommended)` が表示されます。macOS 権限設定ではそのパスをそのまま許可してください。
+- macOS の権限ダイアログに `mflow` ではなく `python3.11` が表示される場合があります。権限はコマンド名ではなく、実行ファイルの実体パス（および署名）単位で管理されます。
 
 推奨確認手順:
 ```bash

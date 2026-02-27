@@ -97,6 +97,7 @@ Notes:
 - Use `--allow-missing-permissions` only when you intentionally want to install anyway.
 - Runtime auto-recovery output is quiet on success; use `--verbose-bootstrap` when you need full `uv sync` logs.
 - On successful install, the CLI prints `Permission target (recommended)`. Use that exact path in macOS permission settings.
+- macOS permission prompts may show `python3.11` instead of `mflow`. Permissions are tied to the exact executable path (and code signature), not just the command name.
 
 Recommended verification flow:
 ```bash

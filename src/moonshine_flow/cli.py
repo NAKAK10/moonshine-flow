@@ -13,6 +13,7 @@ from pathlib import Path
 
 from moonshine_flow.config import default_config_path, load_config
 from moonshine_flow.launchd import (
+    LAUNCH_AGENT_LABEL,
     install_launch_agent,
     launch_agent_log_paths,
     launch_agent_path,
@@ -25,6 +26,9 @@ from moonshine_flow.permissions import (
     check_permissions_in_launchd_context,
     format_permission_guidance,
     recommended_permission_target,
+    request_accessibility_permission,
+    request_input_monitoring_permission,
+    request_microphone_permission,
     request_all_permissions,
 )
 
@@ -67,6 +71,16 @@ def cmd_run(args: argparse.Namespace) -> int:
         return 3
 
     report = check_all_permissions()
+    in_launchd_context = os.environ.get("XPC_SERVICE_NAME") == LAUNCH_AGENT_LABEL
+    if in_launchd_context and not report.all_granted:
+        # Trigger prompts from daemon context so launchd-triggered runs can obtain trust.
+        if not report.microphone:
+            request_microphone_permission()
+        if not report.accessibility:
+            request_accessibility_permission()
+        if not report.input_monitoring:
+            request_input_monitoring_permission()
+        report = check_all_permissions()
     if not report.all_granted:
         LOGGER.warning(format_permission_guidance(report))
 
@@ -181,6 +195,30 @@ def _derive_launchd_permission_check_command(
     return default_command
 
 
+def _latest_launchd_runtime_warning(err_log_path: Path) -> str | None:
+    """Return latest launchd runtime warning text from daemon stderr log when present."""
+    if not err_log_path.exists():
+        return None
+    try:
+        lines = err_log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return None
+    if not lines:
+        return None
+
+    latest_start = 0
+    for idx, line in enumerate(lines):
+        if "Moonshine Flow daemon starting" in line:
+            latest_start = idx
+
+    recent = lines[latest_start:]
+    if any("This process is not trusted!" in line for line in recent):
+        return "pynput listener is not trusted in daemon runtime context"
+    if any("Missing macOS permissions detected:" in line for line in recent):
+        return "daemon runtime detected missing macOS permissions"
+    return None
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     from moonshine_flow.transcriber import MoonshineTranscriber
 
@@ -211,6 +249,9 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             print("LaunchAgent program: UNKNOWN")
     print(f"Daemon stdout log: {out_log_path}")
     print(f"Daemon stderr log: {err_log_path}")
+    runtime_warning = _latest_launchd_runtime_warning(err_log_path)
+    if runtime_warning:
+        print(f"Launchd runtime status: WARNING ({runtime_warning})")
 
     for pkg in ("moonshine_voice", "sounddevice", "pynput"):
         print(f"Package {pkg}:", "FOUND" if find_spec(pkg) else "MISSING")
@@ -242,6 +283,11 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                 print(
                     "Permission mismatch detected between terminal and launchd contexts. "
                     "Grant permissions for the recommended target above."
+                )
+            if runtime_warning:
+                print(
+                    "Launchd runtime log indicates trust failure despite check output. "
+                    "Restart the launch agent after granting permissions."
                 )
         else:
             print("Launchd permissions: ERROR")
