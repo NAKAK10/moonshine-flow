@@ -159,6 +159,7 @@ _PROBE_SCRIPT = textwrap.dedent(
     }
 
     try:
+        import moonshine_flow.cli  # noqa: F401
         import moonshine_voice
 
         package_path = Path(moonshine_voice.__file__).resolve()
@@ -179,13 +180,21 @@ _PROBE_SCRIPT = textwrap.dedent(
 class SubprocessRuntimeProbe:
     """Probes runtime by executing a compatibility script in that venv."""
 
-    def __init__(self, script: str = _PROBE_SCRIPT) -> None:
+    def __init__(self, script: str = _PROBE_SCRIPT, project_src_dir: Path | None = None) -> None:
         self._script = script
+        self._project_src_dir = project_src_dir
 
     def probe(self, runtime: RuntimeCandidate) -> RuntimeProbeResult:
         python = runtime.python_path
         if not python.exists() or not os.access(python, os.X_OK):
             return RuntimeProbeResult(ok=False, error="runtime python is missing or not executable")
+
+        env = os.environ.copy()
+        if self._project_src_dir and self._project_src_dir.is_dir():
+            existing = env.get("PYTHONPATH", "")
+            env["PYTHONPATH"] = (
+                f"{self._project_src_dir}:{existing}" if existing else str(self._project_src_dir)
+            )
 
         try:
             process = subprocess.run(
@@ -193,6 +202,7 @@ class SubprocessRuntimeProbe:
                 check=False,
                 capture_output=True,
                 text=True,
+                env=env,
             )
         except OSError as exc:
             return RuntimeProbeResult(ok=False, error=f"failed to execute runtime python: {exc}")
@@ -231,7 +241,13 @@ class SubprocessRuntimeProbe:
 class RuntimeBuilder:
     """Creates and syncs a runtime virtual environment."""
 
-    _REQUIRED_PROJECT_FILES = ("pyproject.toml", "uv.lock", "README.md")
+    _REQUIRED_PROJECT_FILES = (
+        "pyproject.toml",
+        "uv.lock",
+        "README.md",
+        "src/moonshine_flow/__init__.py",
+        "src/moonshine_flow/cli.py",
+    )
 
     def __init__(self, project_dir: Path) -> None:
         self._project_dir = project_dir
@@ -333,7 +349,9 @@ class RuntimeManager:
         self._builder = builder or RuntimeBuilder(project_dir)
         self._state_store = state_store or RuntimeStateStore(state_dir)
         self._fingerprint = fingerprint or ProjectFingerprint(project_dir)
-        self._runtime_probe = runtime_probe or SubprocessRuntimeProbe()
+        self._runtime_probe = runtime_probe or SubprocessRuntimeProbe(
+            project_src_dir=project_dir / "src"
+        )
         if toolchains is None:
             resolved_toolchains = _discover_toolchains(
                 python_bin=python_bin,
@@ -362,7 +380,12 @@ class RuntimeManager:
     def launch(self, cli_args: Sequence[str]) -> None:
         runtime = self.resolve_runtime()
         command = runtime.cli_command(cli_args)
-        os.execv(command[0], command)
+        env = os.environ.copy()
+        project_src = self._project_dir / "src"
+        if project_src.is_dir():
+            existing = env.get("PYTHONPATH", "")
+            env["PYTHONPATH"] = f"{project_src}:{existing}" if existing else str(project_src)
+        os.execve(command[0], command, env)
 
     def _resolve_for_toolchain(self, toolchain: Toolchain) -> RuntimeCandidate:
         primary = RuntimeCandidate(

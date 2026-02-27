@@ -61,6 +61,10 @@ def _write_project_files(project_dir: Path) -> None:
     (project_dir / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
     (project_dir / "uv.lock").write_text("version = 1\n", encoding="utf-8")
     (project_dir / "README.md").write_text("# demo\n", encoding="utf-8")
+    package_dir = project_dir / "src" / "moonshine_flow"
+    package_dir.mkdir(parents=True, exist_ok=True)
+    (package_dir / "__init__.py").write_text("__version__ = '0.0.0'\n", encoding="utf-8")
+    (package_dir / "cli.py").write_text("def main() -> int:\n    return 0\n", encoding="utf-8")
 
 
 def test_project_fingerprint_changes_with_lockfile(tmp_path: Path) -> None:
@@ -378,3 +382,54 @@ def test_parse_bootstrap_args_preserves_cli_options_after_separator() -> None:
 
     assert options.libexec == "/tmp/libexec"
     assert cli_args == ["--help"]
+
+
+def test_runtime_manager_launch_injects_project_src_into_pythonpath(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project_dir = tmp_path / "libexec"
+    state_dir = tmp_path / "var"
+    _write_project_files(project_dir)
+
+    manager = RuntimeManager(
+        project_dir=project_dir,
+        state_dir=state_dir,
+        python_bin=tmp_path / "python3.11",
+        uv_bin=tmp_path / "uv",
+        runtime_probe=_FakeProbe(_probe_from_executable),
+        toolchains=[Toolchain("primary", tmp_path / "python3.11", tmp_path / "uv", "arm64")],
+        host_arch="arm64",
+    )
+
+    runtime = RuntimeCandidate(
+        name="recovery-arm64",
+        venv_dir=state_dir / ".venv-arm64",
+        toolchain=Toolchain("primary", tmp_path / "python3.11", tmp_path / "uv", "arm64"),
+        scope="arm64",
+    )
+    monkeypatch.setattr(manager, "resolve_runtime", lambda: runtime)
+
+    captured: dict[str, object] = {}
+
+    def fake_execve(path: str, args: list[str], env: dict[str, str]) -> None:
+        captured["path"] = path
+        captured["args"] = args
+        captured["env"] = env
+        raise RuntimeError("exec-called")
+
+    monkeypatch.setattr(bootstrap.os, "execve", fake_execve)
+
+    with pytest.raises(RuntimeError, match="exec-called"):
+        manager.launch(["--help"])
+
+    assert captured["path"] == str(runtime.python_path)
+    assert captured["args"] == [
+        str(runtime.python_path),
+        "-m",
+        "moonshine_flow.cli",
+        "--help",
+    ]
+    env = captured["env"]
+    assert isinstance(env, dict)
+    assert env["PYTHONPATH"] == str(project_dir / "src")
