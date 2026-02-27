@@ -27,21 +27,24 @@ class MoonshineFlow < Formula
     ENV["SETUPTOOLS_SCM_PRETEND_VERSION_FOR_MOONSHINE_FLOW"] = version.to_s unless build.head?
     system uv, "sync", "--project", libexec, "--frozen"
 
-    (bin/"moonshine-flow").write <<~SH
-      #!/bin/bash
-      exec "#{python}" "#{opt_libexec}/src/moonshine_flow/homebrew_bootstrap.py" \
-        --libexec "#{opt_libexec}" \
-        --var-dir "#{var}/moonshine-flow" \
-        --python "#{python}" \
-        --uv "#{uv}" \
-        -- \
-        "$@"
-    SH
-    chmod 0755, bin/"moonshine-flow"
+    %w[moonshine-flow mflow].each do |command_name|
+      (bin/command_name).write <<~SH
+        #!/bin/bash
+        exec "#{python}" "#{opt_libexec}/src/moonshine_flow/homebrew_bootstrap.py" \
+          --libexec "#{opt_libexec}" \
+          --var-dir "#{var}/moonshine-flow" \
+          --python "#{python}" \
+          --uv "#{uv}" \
+          -- \
+          "$@"
+      SH
+      chmod 0755, bin/command_name
+    end
   end
 
   test do
     assert_match "moonshine-flow", shell_output("#{bin}/moonshine-flow --help")
+    assert_match "moonshine-flow", shell_output("#{bin}/mflow --help")
     assert_predicate opt_prefix/"README.md", :exist?
     probe = shell_output(
       <<~EOS

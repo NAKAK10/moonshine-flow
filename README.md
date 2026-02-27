@@ -13,6 +13,7 @@ moonshine-flow doctor
 moonshine-flow check-permissions --request
 moonshine-flow run
 ```
+`mflow` is a shorthand alias, so `mflow doctor` / `mflow run` also work.
 
 If install fails because of tap or Homebrew environment issues, try:
 ```bash
@@ -37,6 +38,14 @@ Settings location: `System Settings -> Privacy & Security`
 | `moonshine-flow check-permissions --request` | Prompt for missing permissions where possible and show status. |
 | `moonshine-flow install-launch-agent` | Install the launchd agent for auto-start at login. |
 | `moonshine-flow uninstall-launch-agent` | Remove the launchd agent. |
+| `mflow -v` | Show package version and exit (same as `moonshine-flow -v`). |
+| `mflow --version` | Show package version and exit (same as `moonshine-flow --version`). |
+| `mflow run` | Run the background daemon (same as `moonshine-flow run`). |
+| `mflow doctor` | Print runtime diagnostics and permission status (same as `moonshine-flow doctor`). |
+| `mflow check-permissions` | Check required macOS permissions without prompting (same as `moonshine-flow check-permissions`). |
+| `mflow check-permissions --request` | Prompt for missing permissions where possible (same as `moonshine-flow check-permissions --request`). |
+| `mflow install-launch-agent` | Install the launchd agent for auto-start at login (same as `moonshine-flow install-launch-agent`). |
+| `mflow uninstall-launch-agent` | Remove the launchd agent (same as `moonshine-flow uninstall-launch-agent`). |
 
 ## Features
 - Recording trigger via global key monitor

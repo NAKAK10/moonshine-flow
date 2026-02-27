@@ -13,6 +13,7 @@ moonshine-flow doctor
 moonshine-flow check-permissions --request
 moonshine-flow run
 ```
+`mflow` は短縮エイリアスなので、`mflow doctor` / `mflow run` も同じように使えます。
 
 tap や Homebrew 環境起因でインストール失敗する場合は、次を試してください:
 ```bash
@@ -37,6 +38,14 @@ tap や Homebrew 環境起因でインストール失敗する場合は、次を
 | `moonshine-flow check-permissions --request` | 可能な範囲で不足権限の許可を要求し、状態を表示します。 |
 | `moonshine-flow install-launch-agent` | ログイン時自動起動用の launchd エージェントをインストールします。 |
 | `moonshine-flow uninstall-launch-agent` | launchd エージェントを削除します。 |
+| `mflow -v` | パッケージバージョンを表示して終了します（`moonshine-flow -v` と同じ）。 |
+| `mflow --version` | パッケージバージョンを表示して終了します（`moonshine-flow --version` と同じ）。 |
+| `mflow run` | バックグラウンドデーモンを起動します（`moonshine-flow run` と同じ）。 |
+| `mflow doctor` | ランタイム診断と権限状態を表示します（`moonshine-flow doctor` と同じ）。 |
+| `mflow check-permissions` | macOS 権限の状態を確認します（`moonshine-flow check-permissions` と同じ）。 |
+| `mflow check-permissions --request` | 不足権限の許可を要求します（`moonshine-flow check-permissions --request` と同じ）。 |
+| `mflow install-launch-agent` | launchd エージェントをインストールします（`moonshine-flow install-launch-agent` と同じ）。 |
+| `mflow uninstall-launch-agent` | launchd エージェントを削除します（`moonshine-flow uninstall-launch-agent` と同じ）。 |
 
 ## できること
 - グローバルキー監視で録音トリガー
