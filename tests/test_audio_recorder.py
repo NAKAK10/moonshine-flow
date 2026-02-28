@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import numpy as np
+
 from moonshine_flow.audio_recorder import AudioRecorder
 
 
@@ -76,3 +78,34 @@ def test_recorder_passes_input_device_when_configured(monkeypatch) -> None:
     assert _FakeStream.closed == 1
     assert _FakeStream.last_kwargs is not None
     assert _FakeStream.last_kwargs["device"] == "MacBook Air Microphone"
+
+
+def test_stop_captures_final_callback_frames(monkeypatch) -> None:
+    class _CallbackOnStopStream:
+        def __init__(self, **kwargs):
+            self._callback = kwargs["callback"]
+
+        def start(self) -> None:
+            return None
+
+        def stop(self) -> None:
+            tail = np.array([[0.25], [0.5]], dtype=np.float32)
+            self._callback(tail, 2, None, 0)
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr("moonshine_flow.audio_recorder.sd.InputStream", _CallbackOnStopStream)
+
+    recorder = AudioRecorder(
+        sample_rate=16000,
+        channels=1,
+        dtype="float32",
+        max_record_seconds=30,
+    )
+
+    recorder.start()
+    merged = recorder.stop()
+
+    assert merged.shape == (2, 1)
+    assert np.allclose(merged[:, 0], np.array([0.25, 0.5], dtype=np.float32))

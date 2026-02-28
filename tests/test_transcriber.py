@@ -112,7 +112,7 @@ def test_transcribe_uses_initialized_backend(monkeypatch) -> None:
 
     assert text == "こんにちは"
     assert calls["sample_rate"] == 16000
-    assert calls["audio_len"] == 2
+    assert calls["audio_len"] == 8002
 
     transcriber.close()
     assert calls["closed"] is True

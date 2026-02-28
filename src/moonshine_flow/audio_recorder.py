@@ -94,9 +94,6 @@ class AudioRecorder:
 
     def stop(self) -> np.ndarray:
         """Stop recording and return audio samples."""
-        with self._lock:
-            self._recording = False
-
         if self._stream is not None:
             try:
                 self._stream.stop()
@@ -107,6 +104,7 @@ class AudioRecorder:
                 self._stream = None
 
         with self._lock:
+            self._recording = False
             if not self._frames:
                 return np.empty((0, self.channels), dtype=self.dtype)
             merged = np.concatenate(self._frames, axis=0)

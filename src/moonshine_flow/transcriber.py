@@ -10,6 +10,7 @@ from typing import Any
 import numpy as np
 
 LOGGER = logging.getLogger(__name__)
+_TRAILING_SILENCE_SECONDS = 0.5
 
 _JAPANESE_CHAR_CLASS = r"\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff々〆ヵヶー"
 _JAPANESE_INNER_WHITESPACE_PATTERN = re.compile(
@@ -135,6 +136,11 @@ class MoonshineTranscriber:
         assert self._transcriber is not None
 
         normalized = self._normalize_audio(audio)
+        trailing_silence_samples = int(sample_rate * _TRAILING_SILENCE_SECONDS)
+        if trailing_silence_samples > 0:
+            normalized = np.concatenate(
+                (normalized, np.zeros(trailing_silence_samples, dtype=np.float32))
+            )
         transcript = self._transcriber.transcribe_without_streaming(
             normalized.tolist(),
             sample_rate=sample_rate,
