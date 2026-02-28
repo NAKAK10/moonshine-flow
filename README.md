@@ -15,6 +15,11 @@ moonshine-flow run
 ```
 `mflow` is a shorthand alias, so `mflow doctor` / `mflow run` also work.
 
+Quick config note:
+- Main config: `~/.config/moonshine-flow/config.toml` (auto-created on first run)
+- Optional correction dictionary: `~/.config/moonshine-flow/transcription_corrections.toml`
+- Example dictionary: [transcription_corrections.example.toml](https://github.com/NAKAK10/moonshine-flow/blob/main/transcription_corrections.example.toml)
+
 If install fails because of tap or Homebrew environment issues, try:
 ```bash
 ./scripts/install_brew.sh
