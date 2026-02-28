@@ -11,7 +11,7 @@ def test_write_example_and_load_config(tmp_path: Path) -> None:
     assert isinstance(loaded, AppConfig)
     assert loaded.hotkey.key == "right_cmd"
     assert loaded.model.size.value in {"base", "tiny"}
-    assert loaded.audio.input_device_policy.value == "system_default"
+    assert loaded.audio.input_device_policy.value == "playback_friendly"
 
 
 def test_load_config_creates_missing_file(tmp_path: Path) -> None:

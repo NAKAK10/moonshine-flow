@@ -46,7 +46,7 @@ class AudioConfig(BaseModel):
     dtype: str = "float32"
     max_record_seconds: int = 30
     input_device: str | int | None = None
-    input_device_policy: InputDevicePolicy = InputDevicePolicy.SYSTEM_DEFAULT
+    input_device_policy: InputDevicePolicy = InputDevicePolicy.PLAYBACK_FRIENDLY
 
 
 class ModelConfig(BaseModel):

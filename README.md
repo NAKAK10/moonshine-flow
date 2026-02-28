@@ -192,7 +192,7 @@ If missing, it is created automatically on first run.
 Main settings:
 - `hotkey.key`: Recording trigger key (default: `right_cmd`)
 - `audio.input_device`: Optional fixed input device (name or index)
-- `audio.input_device_policy`: `system_default` / `external_preferred` / `playback_friendly` (used when `input_device` is unset; if omitted, behaves as `system_default`)
+- `audio.input_device_policy`: `system_default` / `external_preferred` / `playback_friendly` (used when `input_device` is unset; if omitted, behaves as `playback_friendly`)
 - `model.size`: `base` / `tiny`
 - `model.language`: `auto` / `ja` / `en` / etc.
 - `model.device`: `mps` / `cpu`

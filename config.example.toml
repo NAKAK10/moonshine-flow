@@ -8,12 +8,12 @@ dtype = "float32"
 max_record_seconds = 30
 # If set, this exact input device is used first (name or index).
 # input_device = "MacBook Air Microphone"
-# Used only when input_device is not set. If omitted, behaves as system_default.
+# Used only when input_device is not set. If omitted, behaves as playback_friendly.
 # - system_default: keep current behavior and use macOS default input device.
 # - external_preferred: prefer a connected non-default input device; fallback to default.
 #   Note: depending on Bluetooth profile switching, music playback quality/volume can drop.
 # - playback_friendly: avoid likely Bluetooth headset mics and prefer non-Bluetooth input.
-input_device_policy = "system_default"
+input_device_policy = "playback_friendly"
 
 [model]
 size = "base"
