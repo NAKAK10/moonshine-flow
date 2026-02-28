@@ -3,20 +3,16 @@
 from __future__ import annotations
 
 import logging
-import re
 from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
 
+from moonshine_flow.text_processing.interfaces import NoopTextPostProcessor, TextPostProcessor
+from moonshine_flow.text_processing.normalizer import normalize_transcript_text
+
 LOGGER = logging.getLogger(__name__)
 _TRAILING_SILENCE_SECONDS = 0.5
-
-_JAPANESE_CHAR_CLASS = r"\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff々〆ヵヶー"
-_JAPANESE_INNER_WHITESPACE_PATTERN = re.compile(
-    rf"(?<=[{_JAPANESE_CHAR_CLASS}])(?:\s|\u3000)+(?=[{_JAPANESE_CHAR_CLASS}])"
-)
-
 
 @dataclass(slots=True)
 class DeviceResolution:
@@ -29,7 +25,13 @@ class DeviceResolution:
 class MoonshineTranscriber:
     """Transcribe audio with moonshine-voice models."""
 
-    def __init__(self, model_size: str, language: str, device: str) -> None:
+    def __init__(
+        self,
+        model_size: str,
+        language: str,
+        device: str,
+        post_processor: TextPostProcessor | None = None,
+    ) -> None:
         self.model_size = model_size.strip().lower()
         self.language = language.strip().lower()
         self.device_resolution = self._resolve_device(device)
@@ -39,6 +41,7 @@ class MoonshineTranscriber:
         self._resolved_model_arch = self.model_size
         self._resolved_model_path = ""
         self._transcriber: Any | None = None
+        self._post_processor = post_processor or NoopTextPostProcessor()
 
     @staticmethod
     def _resolve_device(requested: str) -> DeviceResolution:
@@ -68,10 +71,7 @@ class MoonshineTranscriber:
 
     @staticmethod
     def _normalize_transcript_text(text: str) -> str:
-        normalized = text.strip()
-        if not normalized:
-            return ""
-        return _JAPANESE_INNER_WHITESPACE_PATTERN.sub("", normalized)
+        return normalize_transcript_text(text)
 
     @staticmethod
     def _resolve_model_arch(model_size: str):
@@ -145,7 +145,7 @@ class MoonshineTranscriber:
             normalized.tolist(),
             sample_rate=sample_rate,
         )
-        return self._stringify_transcript(transcript)
+        return self._post_processor.apply(self._stringify_transcript(transcript))
 
     def backend_summary(self) -> str:
         """Return a short backend summary for diagnostics."""

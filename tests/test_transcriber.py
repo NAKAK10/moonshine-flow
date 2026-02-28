@@ -5,6 +5,7 @@ from types import ModuleType, SimpleNamespace
 
 import numpy as np
 
+from moonshine_flow.transcription_corrections import TranscriptionCorrections
 from moonshine_flow.transcriber import MoonshineTranscriber
 
 
@@ -121,3 +122,32 @@ def test_transcribe_uses_initialized_backend(monkeypatch) -> None:
 def test_auto_language_resolves_to_en() -> None:
     transcriber = MoonshineTranscriber(model_size="base", language="auto", device="cpu")
     assert transcriber._resolved_language == "en"
+
+
+def test_transcribe_applies_text_corrections(monkeypatch) -> None:
+    class FakeBackendTranscriber:
+        def __init__(self, model_path: str, model_arch: object) -> None:
+            del model_path, model_arch
+
+        def transcribe_without_streaming(self, audio_data, sample_rate: int = 16000):
+            del audio_data, sample_rate
+            return SimpleNamespace(lines=[SimpleNamespace(text="むーんしゃいんふ")])
+
+    def fake_get_model_for_language(wanted_language: str, wanted_model_arch: object):
+        del wanted_language, wanted_model_arch
+        return "/tmp/fake-model", SimpleNamespace(name="BASE")
+
+    _install_fake_moonshine(monkeypatch, fake_get_model_for_language, FakeBackendTranscriber)
+
+    corrections = TranscriptionCorrections(exact_lookup={"むーんしゃいんふ": "Moonshine Flow"}, regex_rules=[])
+    transcriber = MoonshineTranscriber(
+        model_size="base",
+        language="ja",
+        device="mps",
+        post_processor=corrections,
+    )
+    monkeypatch.setattr(transcriber, "_resolve_model_arch", lambda _size: "ARCH")
+    transcriber.preflight_model()
+
+    text = transcriber.transcribe(np.array([0.1, 0.2], dtype=np.float32), sample_rate=16000)
+    assert text == "Moonshine Flow"

@@ -13,6 +13,7 @@ from moonshine_flow.audio_recorder import AudioRecorder
 from moonshine_flow.config import AppConfig
 from moonshine_flow.hotkey_monitor import HotkeyMonitor
 from moonshine_flow.output_injector import OutputInjector
+from moonshine_flow.text_processing.interfaces import TextPostProcessor
 from moonshine_flow.transcriber import MoonshineTranscriber
 
 LOGGER = logging.getLogger(__name__)
@@ -21,7 +22,11 @@ LOGGER = logging.getLogger(__name__)
 class MoonshineFlowDaemon:
     """Hold-to-record, release-to-transcribe daemon."""
 
-    def __init__(self, config: AppConfig) -> None:
+    def __init__(
+        self,
+        config: AppConfig,
+        post_processor: TextPostProcessor | None = None,
+    ) -> None:
         self.config = config
         self._stop_event = threading.Event()
         self._audio_queue: queue.Queue[np.ndarray] = queue.Queue()
@@ -38,6 +43,7 @@ class MoonshineFlowDaemon:
             model_size=config.model.size.value,
             language=config.model.language,
             device=config.model.device,
+            post_processor=post_processor,
         )
         self.injector = OutputInjector(
             mode=config.output.mode.value,

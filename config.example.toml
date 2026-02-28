@@ -27,3 +27,11 @@ paste_shortcut = "cmd+v"
 [runtime]
 log_level = "INFO"
 notify_on_error = true
+
+[text]
+# Optional transcription correction dictionary path.
+# If not set, this default path is used:
+#   ~/.config/moonshine-flow/transcription_corrections.toml
+# Example dictionary file is bundled at:
+#   https://github.com/NAKAK10/moonshine-flow/blob/main/transcription_corrections.example.toml
+# dictionary_path = "~/.config/moonshine-flow/transcription_corrections.toml"

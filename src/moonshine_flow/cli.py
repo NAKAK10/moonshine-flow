@@ -44,6 +44,8 @@ from moonshine_flow.permissions import (
     request_all_permissions,
     reset_app_bundle_tcc,
 )
+from moonshine_flow.text_processing.repository import CorrectionDictionaryError, CorrectionDictionaryLoadResult
+from moonshine_flow.text_processing.service import CorrectionService
 
 LOGGER = logging.getLogger(__name__)
 
@@ -59,6 +61,22 @@ def _resolve_config_path(path_value: str | None) -> Path:
     if path_value:
         return Path(path_value).expanduser()
     return default_config_path()
+
+
+def _load_corrections_with_diagnostics(
+    config: object,
+    *,
+    config_path: Path,
+) -> tuple[CorrectionDictionaryLoadResult | None, str | None]:
+    service = CorrectionService.create_default()
+    try:
+        result = service.load_for_config(
+            config=config,
+            config_path=config_path,
+        )
+    except CorrectionDictionaryError as exc:
+        return None, str(exc)
+    return result, None
 
 
 def _has_moonshine_backend() -> bool:
@@ -115,6 +133,25 @@ def cmd_run(args: argparse.Namespace) -> int:
     config = load_config(config_path)
     configure_logging(config.runtime.log_level)
 
+    correction_result, correction_error = _load_corrections_with_diagnostics(
+        config,
+        config_path=config_path,
+    )
+    if correction_error is not None:
+        LOGGER.error("Failed to load transcription correction dictionary: %s", correction_error)
+        return 5
+    assert correction_result is not None
+    for warning in correction_result.warnings:
+        LOGGER.warning(warning.message)
+    if correction_result.loaded:
+        LOGGER.info(
+            "Transcription correction dictionary loaded: path=%s exact=%d regex=%d disabled_regex=%d",
+            correction_result.path,
+            correction_result.rules.exact_count,
+            correction_result.rules.regex_count,
+            correction_result.disabled_regex_count,
+        )
+
     if not _has_moonshine_backend():
         LOGGER.error(_backend_guidance())
         return 3
@@ -137,7 +174,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     if not report.all_granted:
         LOGGER.warning(format_permission_guidance(report))
 
-    daemon = MoonshineFlowDaemon(config)
+    daemon = MoonshineFlowDaemon(config, post_processor=correction_result.rules)
     try:
         backend = daemon.transcriber.preflight_model()
         LOGGER.info("Model preflight OK (%s)", backend)
@@ -420,6 +457,10 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
     config_path = _resolve_config_path(args.config)
     config = load_config(config_path)
+    correction_result, correction_error = _load_corrections_with_diagnostics(
+        config,
+        config_path=config_path,
+    )
 
     os_machine = os.uname().machine if hasattr(os, "uname") else "unknown"
     py_machine = platform.machine()
@@ -429,6 +470,28 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     print(f"OS machine: {os_machine}")
     print(f"Python machine: {py_machine}")
     print(f"Config: {config_path}")
+    if correction_error is not None:
+        print(f"Correction dictionary: ERROR ({correction_error})")
+    else:
+        assert correction_result is not None
+        print(f"Correction dictionary path: {correction_result.path}")
+        if not correction_result.loaded:
+            print("Correction dictionary: DISABLED (file not found)")
+        elif correction_result.warnings:
+            print(
+                "Correction dictionary: WARN "
+                f"(exact={correction_result.rules.exact_count}, "
+                f"regex={correction_result.rules.regex_count}, "
+                f"disabled_regex={correction_result.disabled_regex_count})"
+            )
+            for warning in correction_result.warnings:
+                print(f"Correction dictionary warning: {warning.message}")
+        else:
+            print(
+                "Correction dictionary: OK "
+                f"(exact={correction_result.rules.exact_count}, "
+                f"regex={correction_result.rules.regex_count})"
+            )
     print(f"Permission target (recommended): {recommended_permission_target()}")
     launchd_payload = read_launch_agent_plist()
     out_log_path, err_log_path = launch_agent_log_paths()

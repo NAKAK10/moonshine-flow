@@ -18,7 +18,8 @@ def test_cmd_run_requests_missing_permissions_in_launchd_context(monkeypatch) ->
     ]
 
     class FakeDaemon:
-        def __init__(self, _config) -> None:
+        def __init__(self, _config, post_processor=None) -> None:
+            del post_processor
             self.transcriber = SimpleNamespace(preflight_model=lambda: "moonshine-voice")
 
         def run_forever(self) -> None:
@@ -65,12 +66,40 @@ def test_cmd_run_requests_missing_permissions_in_launchd_context(monkeypatch) ->
     assert calls["stop"] == 1
 
 
+def test_load_corrections_warns_when_explicit_path_missing(tmp_path: Path) -> None:
+    config = SimpleNamespace(text=SimpleNamespace(dictionary_path="missing-dict.toml"))
+
+    result, error = cli._load_corrections_with_diagnostics(
+        config,
+        config_path=tmp_path / "config.toml",
+    )
+
+    assert error is None
+    assert result is not None
+    assert result.loaded is False
+    assert len(result.warnings) == 1
+
+
+def test_load_corrections_disables_when_default_path_missing(tmp_path: Path) -> None:
+    config = SimpleNamespace(text=SimpleNamespace(dictionary_path=None))
+
+    result, error = cli._load_corrections_with_diagnostics(
+        config,
+        config_path=tmp_path / "config.toml",
+    )
+
+    assert error is None
+    assert result is not None
+    assert result.loaded is False
+
+
 def test_cmd_run_skips_permission_requests_outside_launchd(monkeypatch) -> None:
     fake_daemon_mod = ModuleType("moonshine_flow.daemon")
     calls = {"requests": 0, "stop": 0}
 
     class FakeDaemon:
-        def __init__(self, _config) -> None:
+        def __init__(self, _config, post_processor=None) -> None:
+            del post_processor
             self.transcriber = SimpleNamespace(preflight_model=lambda: "moonshine-voice")
 
         def run_forever(self) -> None:
@@ -124,7 +153,8 @@ def test_cmd_run_skips_permission_requests_once_after_restart_marker(monkeypatch
     calls = {"requests": 0, "stop": 0}
 
     class FakeDaemon:
-        def __init__(self, _config) -> None:
+        def __init__(self, _config, post_processor=None) -> None:
+            del post_processor
             self.transcriber = SimpleNamespace(preflight_model=lambda: "moonshine-voice")
 
         def run_forever(self) -> None:

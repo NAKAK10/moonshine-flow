@@ -71,6 +71,12 @@ class RuntimeConfig(BaseModel):
     notify_on_error: bool = True
 
 
+class TextConfig(BaseModel):
+    """Transcript text post-processing configuration."""
+
+    dictionary_path: str | None = None
+
+
 class AppConfig(BaseModel):
     """Top-level app configuration."""
 
@@ -79,6 +85,7 @@ class AppConfig(BaseModel):
     model: ModelConfig = Field(default_factory=ModelConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
+    text: TextConfig = Field(default_factory=TextConfig)
 
 
 def default_config_path() -> Path:
@@ -101,6 +108,12 @@ def _dump_toml(data: dict[str, Any]) -> str:
         else:
             input_device_line = f"input_device = {input_device}\\n"
 
+        dictionary_path = data["text"].get("dictionary_path")
+        if dictionary_path is None:
+            dictionary_path_line = ""
+        else:
+            dictionary_path_line = f"dictionary_path = \"{dictionary_path}\"\n"
+
         return (
             "[hotkey]\n"
             f"key = \"{data['hotkey']['key']}\"\n\n"
@@ -120,7 +133,9 @@ def _dump_toml(data: dict[str, Any]) -> str:
             f"paste_shortcut = \"{data['output']['paste_shortcut']}\"\n\n"
             "[runtime]\n"
             f"log_level = \"{data['runtime']['log_level']}\"\n"
-            f"notify_on_error = {str(data['runtime']['notify_on_error']).lower()}\n"
+            f"notify_on_error = {str(data['runtime']['notify_on_error']).lower()}\n\n"
+            "[text]\n"
+            f"{dictionary_path_line}"
         )
 
 

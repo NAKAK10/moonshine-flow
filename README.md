@@ -193,9 +193,18 @@ Main settings:
 - `hotkey.key`: Recording trigger key (default: `right_cmd`)
 - `audio.input_device`: Optional fixed input device (name or index)
 - `audio.input_device_policy`: `system_default` / `external_preferred` / `playback_friendly` (used when `input_device` is unset; if omitted, behaves as `playback_friendly`)
+- `text.dictionary_path`: Optional transcription correction dictionary path
 - `model.size`: `base` / `tiny`
 - `model.language`: `auto` / `ja` / `en` / etc.
 - `model.device`: `mps` / `cpu`
+
+Transcription correction dictionary:
+- Default path: `~/.config/moonshine-flow/transcription_corrections.toml`
+- Example template: `transcription_corrections.example.toml`
+- GitHub template: `https://github.com/NAKAK10/moonshine-flow/blob/main/transcription_corrections.example.toml`
+- Format (compact): one `[exact]` table and one `[regex]` table
+- If `text.dictionary_path` points to a missing file, startup continues with a warning
+- If dictionary TOML is invalid, startup fails with line/column diagnostics
 
 ## Development (minimal)
 Prerequisites:

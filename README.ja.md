@@ -192,9 +192,18 @@ mflow doctor --launchd-check
 - `hotkey.key`: 録音トリガーキー（既定: `right_cmd`）
 - `audio.input_device`: 固定で使う入力デバイス（名前またはインデックス、任意）
 - `audio.input_device_policy`: `system_default` / `external_preferred` / `playback_friendly`（`input_device` 未指定時に適用。未設定時は `playback_friendly` と同じ挙動）
+- `text.dictionary_path`: 文字起こし補正辞書ファイルのパス（任意）
 - `model.size`: `base` / `tiny`
 - `model.language`: `auto` / `ja` / `en` など
 - `model.device`: `mps` / `cpu`
+
+文字起こし補正辞書:
+- 既定パス: `~/.config/moonshine-flow/transcription_corrections.toml`
+- テンプレート: `transcription_corrections.example.toml`
+- GitHub テンプレート: `https://github.com/NAKAK10/moonshine-flow/blob/main/transcription_corrections.example.toml`
+- 形式: `[exact]` と `[regex]` を各1テーブルで管理
+- `text.dictionary_path` に指定したファイルが存在しない場合は、警告のみで起動継続
+- 辞書 TOML の構文が不正な場合は、行・列つきで起動時にエラー表示
 
 ## 開発参加（最小）
 前提:
