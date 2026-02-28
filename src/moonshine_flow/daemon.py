@@ -32,6 +32,7 @@ class MoonshineFlowDaemon:
             dtype=config.audio.dtype,
             max_record_seconds=config.audio.max_record_seconds,
             input_device=config.audio.input_device,
+            input_device_policy=config.audio.input_device_policy.value,
         )
         self.transcriber = MoonshineTranscriber(
             model_size=config.model.size.value,

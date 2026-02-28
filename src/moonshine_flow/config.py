@@ -24,6 +24,14 @@ class OutputMode(StrEnum):
     CLIPBOARD_PASTE = "clipboard_paste"
 
 
+class InputDevicePolicy(StrEnum):
+    """Input device selection policy when input_device is unset."""
+
+    SYSTEM_DEFAULT = "system_default"
+    EXTERNAL_PREFERRED = "external_preferred"
+    PLAYBACK_FRIENDLY = "playback_friendly"
+
+
 class HotkeyConfig(BaseModel):
     """Hotkey configuration."""
 
@@ -38,6 +46,7 @@ class AudioConfig(BaseModel):
     dtype: str = "float32"
     max_record_seconds: int = 30
     input_device: str | int | None = None
+    input_device_policy: InputDevicePolicy = InputDevicePolicy.SYSTEM_DEFAULT
 
 
 class ModelConfig(BaseModel):
@@ -101,6 +110,7 @@ def _dump_toml(data: dict[str, Any]) -> str:
             f"dtype = \"{data['audio']['dtype']}\"\n"
             f"max_record_seconds = {data['audio']['max_record_seconds']}\n"
             f"{input_device_line}\n"
+            f"input_device_policy = \"{data['audio']['input_device_policy']}\"\n\n"
             "[model]\n"
             f"size = \"{data['model']['size']}\"\n"
             f"language = \"{data['model']['language']}\"\n"

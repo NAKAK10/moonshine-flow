@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import numpy as np
 
 from moonshine_flow.audio_recorder import AudioRecorder
@@ -109,3 +111,155 @@ def test_stop_captures_final_callback_frames(monkeypatch) -> None:
 
     assert merged.shape == (2, 1)
     assert np.allclose(merged[:, 0], np.array([0.25, 0.5], dtype=np.float32))
+
+
+def test_recorder_uses_system_default_when_policy_is_system_default(monkeypatch) -> None:
+    _reset_fake_stream()
+    monkeypatch.setattr("moonshine_flow.audio_recorder.sd.InputStream", _FakeStream)
+
+    recorder = AudioRecorder(
+        sample_rate=16000,
+        channels=1,
+        dtype="float32",
+        max_record_seconds=30,
+        input_device_policy="system_default",
+    )
+
+    recorder.start()
+    recorder.stop()
+
+    assert _FakeStream.last_kwargs is not None
+    assert "device" not in _FakeStream.last_kwargs
+
+
+def test_recorder_prefers_external_input_device_when_policy_enabled(monkeypatch) -> None:
+    _reset_fake_stream()
+    monkeypatch.setattr("moonshine_flow.audio_recorder.sd.InputStream", _FakeStream)
+    monkeypatch.setattr(
+        "moonshine_flow.audio_recorder.sd.query_devices",
+        lambda: [
+            {"name": "MacBook Microphone", "max_input_channels": 1},
+            {"name": "USB Microphone", "max_input_channels": 1},
+        ],
+    )
+    monkeypatch.setattr("moonshine_flow.audio_recorder.sd.default", SimpleNamespace(device=(0, 0)))
+
+    recorder = AudioRecorder(
+        sample_rate=16000,
+        channels=1,
+        dtype="float32",
+        max_record_seconds=30,
+        input_device_policy="external_preferred",
+    )
+
+    recorder.start()
+    recorder.stop()
+
+    assert _FakeStream.last_kwargs is not None
+    assert _FakeStream.last_kwargs["device"] == 1
+
+
+def test_recorder_external_policy_falls_back_to_default_when_no_candidate(monkeypatch) -> None:
+    _reset_fake_stream()
+    monkeypatch.setattr("moonshine_flow.audio_recorder.sd.InputStream", _FakeStream)
+    monkeypatch.setattr(
+        "moonshine_flow.audio_recorder.sd.query_devices",
+        lambda: [{"name": "MacBook Microphone", "max_input_channels": 1}],
+    )
+    monkeypatch.setattr("moonshine_flow.audio_recorder.sd.default", SimpleNamespace(device=(0, 0)))
+
+    recorder = AudioRecorder(
+        sample_rate=16000,
+        channels=1,
+        dtype="float32",
+        max_record_seconds=30,
+        input_device_policy="external_preferred",
+    )
+
+    recorder.start()
+    recorder.stop()
+
+    assert _FakeStream.last_kwargs is not None
+    assert "device" not in _FakeStream.last_kwargs
+
+
+def test_explicit_input_device_takes_priority_over_policy(monkeypatch) -> None:
+    _reset_fake_stream()
+    monkeypatch.setattr("moonshine_flow.audio_recorder.sd.InputStream", _FakeStream)
+    monkeypatch.setattr(
+        "moonshine_flow.audio_recorder.sd.query_devices",
+        lambda: [
+            {"name": "MacBook Microphone", "max_input_channels": 1},
+            {"name": "USB Microphone", "max_input_channels": 1},
+        ],
+    )
+    monkeypatch.setattr("moonshine_flow.audio_recorder.sd.default", SimpleNamespace(device=(0, 0)))
+
+    recorder = AudioRecorder(
+        sample_rate=16000,
+        channels=1,
+        dtype="float32",
+        max_record_seconds=30,
+        input_device="Built-in Microphone",
+        input_device_policy="external_preferred",
+    )
+
+    recorder.start()
+    recorder.stop()
+
+    assert _FakeStream.last_kwargs is not None
+    assert _FakeStream.last_kwargs["device"] == "Built-in Microphone"
+
+
+def test_playback_friendly_policy_avoids_bluetooth_default_input(monkeypatch) -> None:
+    _reset_fake_stream()
+    monkeypatch.setattr("moonshine_flow.audio_recorder.sd.InputStream", _FakeStream)
+    monkeypatch.setattr(
+        "moonshine_flow.audio_recorder.sd.query_devices",
+        lambda: [
+            {"name": "Keiju AirPods", "max_input_channels": 1},
+            {"name": "MacBook Microphone", "max_input_channels": 1},
+        ],
+    )
+    monkeypatch.setattr("moonshine_flow.audio_recorder.sd.default", SimpleNamespace(device=(0, 0)))
+
+    recorder = AudioRecorder(
+        sample_rate=16000,
+        channels=1,
+        dtype="float32",
+        max_record_seconds=30,
+        input_device_policy="playback_friendly",
+    )
+
+    recorder.start()
+    recorder.stop()
+
+    assert _FakeStream.last_kwargs is not None
+    assert _FakeStream.last_kwargs["device"] == 1
+
+
+def test_playback_friendly_policy_keeps_non_bluetooth_default_input(monkeypatch) -> None:
+    _reset_fake_stream()
+    monkeypatch.setattr("moonshine_flow.audio_recorder.sd.InputStream", _FakeStream)
+    monkeypatch.setattr(
+        "moonshine_flow.audio_recorder.sd.query_devices",
+        lambda: [
+            {"name": "MacBook Microphone", "max_input_channels": 1},
+            {"name": "Keiju AirPods", "max_input_channels": 1},
+        ],
+    )
+    monkeypatch.setattr("moonshine_flow.audio_recorder.sd.default", SimpleNamespace(device=(0, 0)))
+
+    recorder = AudioRecorder(
+        sample_rate=16000,
+        channels=1,
+        dtype="float32",
+        max_record_seconds=30,
+        input_device_policy="playback_friendly",
+    )
+
+    recorder.start()
+    recorder.stop()
+
+    assert _FakeStream.last_kwargs is not None
+    assert "device" not in _FakeStream.last_kwargs

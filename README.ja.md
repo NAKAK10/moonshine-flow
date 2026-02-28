@@ -190,6 +190,8 @@ mflow doctor --launchd-check
 
 主な設定:
 - `hotkey.key`: 録音トリガーキー（既定: `right_cmd`）
+- `audio.input_device`: 固定で使う入力デバイス（名前またはインデックス、任意）
+- `audio.input_device_policy`: `system_default` / `external_preferred` / `playback_friendly`（`input_device` 未指定時に適用。未設定時は `system_default` と同じ挙動）
 - `model.size`: `base` / `tiny`
 - `model.language`: `auto` / `ja` / `en` など
 - `model.device`: `mps` / `cpu`
