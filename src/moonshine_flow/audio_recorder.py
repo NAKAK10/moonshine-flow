@@ -143,6 +143,7 @@ class AudioRecorder:
             total = sum(chunk.shape[0] for chunk in self._frames)
             if total >= self._max_frames:
                 LOGGER.warning("Reached max recording duration (%ss)", self.max_record_seconds)
+                self._recording = False
                 raise sd.CallbackStop
 
     def start(self) -> None:

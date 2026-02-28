@@ -53,6 +53,7 @@ class MoonshineFlowDaemon:
             key_name=config.hotkey.key,
             on_press=self._on_hotkey_down,
             on_release=self._on_hotkey_up,
+            max_hold_seconds=float(config.audio.max_record_seconds) + 1.0,
         )
 
         self._worker = threading.Thread(

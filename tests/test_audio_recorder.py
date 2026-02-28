@@ -3,7 +3,9 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
+import moonshine_flow.audio_recorder as audio_recorder_module
 from moonshine_flow.audio_recorder import AudioRecorder
 
 
@@ -263,3 +265,22 @@ def test_playback_friendly_policy_keeps_non_bluetooth_default_input(monkeypatch)
 
     assert _FakeStream.last_kwargs is not None
     assert "device" not in _FakeStream.last_kwargs
+
+
+def test_callback_stop_resets_recording_state(monkeypatch) -> None:
+    monkeypatch.setattr("moonshine_flow.audio_recorder.sd.InputStream", _FakeStream)
+
+    recorder = AudioRecorder(
+        sample_rate=16000,
+        channels=1,
+        dtype="float32",
+        max_record_seconds=1,
+    )
+
+    recorder.start()
+
+    chunk = np.ones((16000, 1), dtype=np.float32)
+    with pytest.raises(audio_recorder_module.sd.CallbackStop):
+        recorder._callback(chunk, 16000, None, 0)
+
+    assert recorder.is_recording is False
