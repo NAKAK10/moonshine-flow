@@ -17,3 +17,16 @@ class NoopTextPostProcessor:
 
     def apply(self, text: str) -> str:
         return text
+
+
+class ChainedTextPostProcessor:
+    """Apply multiple post-processors in order."""
+
+    def __init__(self, processors: list[TextPostProcessor]) -> None:
+        self._processors = processors
+
+    def apply(self, text: str) -> str:
+        processed = text
+        for processor in self._processors:
+            processed = processor.apply(processed)
+        return processed

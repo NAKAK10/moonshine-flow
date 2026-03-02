@@ -41,3 +41,24 @@ notify_on_error = true
 # Example dictionary file is bundled at:
 #   https://github.com/NAKAK10/moonshine-flow/blob/main/transcription_corrections.example.toml
 # dictionary_path = "~/.config/moonshine-flow/transcription_corrections.toml"
+
+[text.llm_correction]
+# Optional LLM-based post-correction after Moonshine transcription.
+# always: enable every run
+# never: disable every run
+# ask: ask only on interactive (TTY) run; non-interactive run behaves as never
+mode = "never"
+# provider = "ollama" or "lmstudio"
+provider = "ollama"
+# Ollama default: http://localhost:11434
+# LM Studio default: http://localhost:1234/v1
+base_url = "http://localhost:11434"
+model = "qwen2.5:7b-instruct"
+# Clamped to [0.5, 5.0]
+timeout_seconds = 2.5
+# Clamped to [50, 5000]
+max_input_chars = 500
+# Reserved for OpenAI-compatible servers; ignored by most local setups.
+# api_key = "sk-..."
+# Enable tool calling only when using a model/server that supports it.
+enabled_tools = false

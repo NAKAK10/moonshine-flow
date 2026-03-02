@@ -99,6 +99,121 @@ def test_load_corrections_disables_when_default_path_missing(tmp_path: Path, mon
     assert result.loaded is False
 
 
+def test_build_runtime_post_processor_returns_base_when_llm_disabled() -> None:
+    class _BaseProcessor:
+        def apply(self, text: str) -> str:
+            return text + "-base"
+
+    base = _BaseProcessor()
+    config = SimpleNamespace(
+        text=SimpleNamespace(
+            llm_correction=SimpleNamespace(
+                mode="never",
+            )
+        )
+    )
+
+    result = cli._build_runtime_post_processor(config, base_processor=base)
+
+    assert result is base
+
+
+def test_build_runtime_post_processor_chains_base_and_llm(monkeypatch) -> None:
+    class _BaseProcessor:
+        def apply(self, text: str) -> str:
+            return text + "-base"
+
+    calls: dict[str, object] = {}
+
+    class _FakeLLMProcessor:
+        def __init__(self, settings) -> None:
+            calls["settings"] = settings
+
+        def preflight(self) -> None:
+            calls["preflight"] = True
+
+        def apply(self, text: str) -> str:
+            return text + "-llm"
+
+    monkeypatch.setattr(cli, "LLMPostProcessor", _FakeLLMProcessor)
+
+    config = SimpleNamespace(
+        text=SimpleNamespace(
+            llm_correction=SimpleNamespace(
+                mode="always",
+                provider="ollama",
+                base_url="http://localhost:11434",
+                model="qwen2.5:7b-instruct",
+                timeout_seconds=2.5,
+                max_input_chars=500,
+                api_key=None,
+                enabled_tools=False,
+            )
+        )
+    )
+
+    result = cli._build_runtime_post_processor(config, base_processor=_BaseProcessor())
+
+    assert result.apply("text") == "text-base-llm"
+    assert calls["preflight"] is True
+    settings = calls["settings"]
+    assert settings.provider == "ollama"
+    assert settings.base_url == "http://localhost:11434"
+    assert settings.enabled_tools is False
+
+
+def test_build_runtime_post_processor_ignores_invalid_llm_config() -> None:
+    class _BaseProcessor:
+        def apply(self, text: str) -> str:
+            return text
+
+    base = _BaseProcessor()
+    config = SimpleNamespace(
+        text=SimpleNamespace(
+            llm_correction=SimpleNamespace(
+                mode="always",
+                provider="ollama",
+                base_url="",
+                model="",
+            )
+        )
+    )
+
+    result = cli._build_runtime_post_processor(config, base_processor=base)
+
+    assert result is base
+
+
+def test_should_enable_llm_correction_for_this_run_mode_always() -> None:
+    llm_cfg = SimpleNamespace(mode="always")
+    assert cli._should_enable_llm_correction_for_this_run(llm_cfg) is True
+
+
+def test_should_enable_llm_correction_for_this_run_mode_never() -> None:
+    llm_cfg = SimpleNamespace(mode="never")
+    assert cli._should_enable_llm_correction_for_this_run(llm_cfg) is False
+
+
+def test_should_enable_llm_correction_for_this_run_mode_ask_interactive_yes(monkeypatch) -> None:
+    llm_cfg = SimpleNamespace(mode="ask")
+    monkeypatch.setattr(cli, "_is_interactive_session", lambda: True)
+    monkeypatch.setattr(cli, "_prompt_llm_correction_for_this_run", lambda: True)
+    assert cli._should_enable_llm_correction_for_this_run(llm_cfg) is True
+
+
+def test_should_enable_llm_correction_for_this_run_mode_ask_interactive_no(monkeypatch) -> None:
+    llm_cfg = SimpleNamespace(mode="ask")
+    monkeypatch.setattr(cli, "_is_interactive_session", lambda: True)
+    monkeypatch.setattr(cli, "_prompt_llm_correction_for_this_run", lambda: False)
+    assert cli._should_enable_llm_correction_for_this_run(llm_cfg) is False
+
+
+def test_should_enable_llm_correction_for_this_run_mode_ask_non_interactive(monkeypatch) -> None:
+    llm_cfg = SimpleNamespace(mode="ask")
+    monkeypatch.setattr(cli, "_is_interactive_session", lambda: False)
+    assert cli._should_enable_llm_correction_for_this_run(llm_cfg) is False
+
+
 def test_cmd_run_skips_permission_requests_outside_launchd(monkeypatch) -> None:
     fake_daemon_mod = ModuleType("moonshine_flow.daemon")
     calls = {"requests": 0, "stop": 0}
@@ -241,6 +356,108 @@ def test_doctor_parser_has_launchd_check_flag() -> None:
     assert args.launchd_check is True
 
 
+def test_init_parser_has_config_option() -> None:
+    parser = cli.build_parser()
+    args = parser.parse_args(["init", "--config", "/tmp/config.toml"])
+    assert args.command == "init"
+    assert args.config == "/tmp/config.toml"
+
+
+def test_cmd_init_requires_interactive_terminal(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(cli, "_is_interactive_session", lambda: False)
+    exit_code = cli.cmd_init(argparse.Namespace(config=None))
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert "interactive terminal" in captured.err
+
+
+def test_dim_plain_when_ansi_disabled(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "_supports_ansi_styles", lambda: False)
+    assert cli._dim("x") == "x"
+
+
+def test_dim_wrapped_when_ansi_enabled(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "_supports_ansi_styles", lambda: True)
+    assert cli._dim("x") == "\x1b[2mx\x1b[0m"
+
+
+def test_format_prompt_includes_current(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "_supports_ansi_styles", lambda: False)
+    prompt = cli._format_prompt("hotkey.key", "right_shift", current_display="right_shift")
+    assert "(current: right_shift)" in prompt
+
+
+def test_prompt_text_shows_keep_line(monkeypatch, capsys) -> None:
+    monkeypatch.setattr("builtins.input", lambda _prompt: "")
+    monkeypatch.setattr(cli, "_supports_ansi_styles", lambda: False)
+    assert cli._prompt_text("hotkey.key", "right_shift") == "right_shift"
+    captured = capsys.readouterr()
+    assert "keep: right_shift" in captured.out
+
+
+def test_prompt_choice_accepts_number(monkeypatch, capsys) -> None:
+    monkeypatch.setattr("builtins.input", lambda _prompt: "2")
+    monkeypatch.setattr(cli, "_supports_ansi_styles", lambda: False)
+    value = cli._prompt_choice(
+        "audio.input_device_policy",
+        "playback_friendly",
+        ["system_default", "external_preferred", "playback_friendly"],
+    )
+    captured = capsys.readouterr()
+    assert value == "external_preferred"
+    assert "1. system_default" in captured.out
+    assert "2. external_preferred" in captured.out
+
+
+def test_cmd_init_updates_values_and_keeps_others(monkeypatch, tmp_path: Path, capsys) -> None:
+    cfg_path = tmp_path / "config.toml"
+    monkeypatch.setattr(cli, "_resolve_config_path", lambda _: cfg_path)
+    monkeypatch.setattr(cli, "_is_interactive_session", lambda: True)
+    monkeypatch.setattr(cli, "_supports_ansi_styles", lambda: False)
+
+    answers = iter(
+        [
+            "right_shift",  # hotkey.key
+            "",  # audio.sample_rate
+            "",  # audio.channels
+            "",  # audio.dtype
+            "",  # audio.max_record_seconds
+            "",  # audio.release_tail_seconds
+            "",  # audio.trailing_silence_seconds
+            "",  # audio.input_device
+            "",  # audio.input_device_policy
+            "",  # model.size
+            "ja",  # model.language
+            "",  # model.device
+            "",  # output.mode
+            "",  # output.paste_shortcut
+            "",  # runtime.log_level
+            "",  # runtime.notify_on_error
+            "",  # text.dictionary_path
+            "ask",  # text.llm_correction.mode
+            "",  # text.llm_correction.provider
+            "",  # text.llm_correction.base_url
+            "llama3.2:latest",  # text.llm_correction.model
+            "",  # text.llm_correction.timeout_seconds
+            "",  # text.llm_correction.max_input_chars
+            "",  # text.llm_correction.api_key
+            "",  # text.llm_correction.enabled_tools
+        ]
+    )
+    monkeypatch.setattr("builtins.input", lambda _prompt: next(answers))
+
+    exit_code = cli.cmd_init(argparse.Namespace(config=None))
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert "keep: 16000" in captured.out
+    updated = cli.load_config(cfg_path)
+    assert updated.hotkey.key == "right_shift"
+    assert updated.model.language == "ja"
+    assert updated.text.llm_correction.mode.value == "ask"
+    assert updated.text.llm_correction.model == "llama3.2:latest"
+
+
 def test_install_app_bundle_parser_has_path() -> None:
     parser = cli.build_parser()
     args = parser.parse_args(["install-app-bundle", "--path", "/tmp/MoonshineFlow.app"])
@@ -277,6 +494,7 @@ def test_restart_launch_agent_parser() -> None:
 def test_cmd_install_launch_agent_aborts_when_permissions_missing(monkeypatch, capsys) -> None:
     monkeypatch.setattr(cli, "_resolve_config_path", lambda _: Path("/tmp/config.toml"))
     monkeypatch.setattr(cli, "load_config", lambda _: object())
+    monkeypatch.setattr(cli, "read_launch_agent_plist", lambda: None)
     monkeypatch.setattr(cli, "install_app_bundle_from_env", lambda _path=None: None)
     monkeypatch.setattr(cli, "resolve_launch_agent_program_prefix", lambda: ["/tmp/mflow"])
     called: dict[str, list[str]] = {}
@@ -316,6 +534,7 @@ def test_cmd_install_launch_agent_aborts_when_permissions_missing(monkeypatch, c
 def test_cmd_install_launch_agent_allows_missing_permissions(monkeypatch, capsys) -> None:
     monkeypatch.setattr(cli, "_resolve_config_path", lambda _: Path("/tmp/config.toml"))
     monkeypatch.setattr(cli, "load_config", lambda _: object())
+    monkeypatch.setattr(cli, "read_launch_agent_plist", lambda: None)
     monkeypatch.setattr(cli, "install_app_bundle_from_env", lambda _path=None: None)
     monkeypatch.setattr(cli, "resolve_launch_agent_program_prefix", lambda: ["/tmp/mflow"])
     called: dict[str, list[str]] = {}
@@ -354,6 +573,7 @@ def test_cmd_install_launch_agent_uses_check_permissions_when_request_disabled(
 ) -> None:
     monkeypatch.setattr(cli, "_resolve_config_path", lambda _: Path("/tmp/config.toml"))
     monkeypatch.setattr(cli, "load_config", lambda _: object())
+    monkeypatch.setattr(cli, "read_launch_agent_plist", lambda: None)
     monkeypatch.setattr(cli, "install_app_bundle_from_env", lambda _path=None: None)
     monkeypatch.setattr(cli, "resolve_launch_agent_program_prefix", lambda: ["/tmp/mflow"])
     called: dict[str, list[str]] = {}
@@ -390,6 +610,7 @@ def test_cmd_install_launch_agent_aborts_when_launchd_check_parse_fails(
 ) -> None:
     monkeypatch.setattr(cli, "_resolve_config_path", lambda _: Path("/tmp/config.toml"))
     monkeypatch.setattr(cli, "load_config", lambda _: object())
+    monkeypatch.setattr(cli, "read_launch_agent_plist", lambda: None)
     monkeypatch.setattr(cli, "install_app_bundle_from_env", lambda _path=None: None)
     monkeypatch.setattr(cli, "resolve_launch_agent_program_prefix", lambda: ["/tmp/mflow"])
     monkeypatch.setattr(
@@ -499,19 +720,24 @@ def test_cmd_install_app_bundle_reports_unavailable_context(monkeypatch, capsys)
     assert "App bundle install is unavailable in this context" in captured.err
 
 
-def test_cmd_restart_launch_agent_succeeds(monkeypatch, capsys) -> None:
+def test_cmd_restart_launch_agent_succeeds(monkeypatch, capsys, tmp_path: Path) -> None:
+    plist_path = tmp_path / "com.moonshineflow.daemon.plist"
+    plist_path.write_text("plist", encoding="utf-8")
     monkeypatch.setattr(cli, "restart_launch_agent", lambda: True)
-    monkeypatch.setattr(cli, "launch_agent_path", lambda: Path("/tmp/com.moonshineflow.daemon.plist"))
+    monkeypatch.setattr(cli, "launch_agent_path", lambda: plist_path)
+    monkeypatch.setattr(cli, "read_launch_agent_plist", lambda: {})
+    monkeypatch.setattr(cli, "_is_interactive_session", lambda: False)
 
     exit_code = cli.cmd_restart_launch_agent(argparse.Namespace())
 
     captured = capsys.readouterr()
     assert exit_code == 0
-    assert "Restarted launch agent: /tmp/com.moonshineflow.daemon.plist" in captured.out
+    assert f"Restarted launch agent: {plist_path}" in captured.out
 
 
 def test_cmd_restart_launch_agent_reports_missing(monkeypatch, capsys) -> None:
     monkeypatch.setattr(cli, "restart_launch_agent", lambda: False)
+    monkeypatch.setattr(cli, "launch_agent_path", lambda: Path("/tmp/missing.plist"))
 
     exit_code = cli.cmd_restart_launch_agent(argparse.Namespace())
 
@@ -520,17 +746,114 @@ def test_cmd_restart_launch_agent_reports_missing(monkeypatch, capsys) -> None:
     assert "Launch agent is not installed." in captured.out
 
 
-def test_cmd_restart_launch_agent_reports_failure(monkeypatch, capsys) -> None:
+def test_cmd_restart_launch_agent_reports_failure(monkeypatch, capsys, tmp_path: Path) -> None:
+    plist_path = tmp_path / "com.moonshineflow.daemon.plist"
+    plist_path.write_text("plist", encoding="utf-8")
+
     def raise_error() -> bool:
         raise RuntimeError("launchctl restart failed: denied")
 
     monkeypatch.setattr(cli, "restart_launch_agent", raise_error)
+    monkeypatch.setattr(cli, "launch_agent_path", lambda: plist_path)
+    monkeypatch.setattr(cli, "read_launch_agent_plist", lambda: {})
+    monkeypatch.setattr(cli, "_is_interactive_session", lambda: False)
 
     exit_code = cli.cmd_restart_launch_agent(argparse.Namespace())
 
     captured = capsys.readouterr()
     assert exit_code == 2
     assert "launchctl restart failed: denied" in captured.err
+
+
+def test_should_enable_llm_correction_for_this_run_uses_launchd_env_override(monkeypatch) -> None:
+    llm_cfg = SimpleNamespace(mode="never")
+    monkeypatch.setenv("XPC_SERVICE_NAME", "com.moonshineflow.daemon")
+    monkeypatch.setenv("MFLOW_LLM_ENABLED", "1")
+    assert cli._should_enable_llm_correction_for_this_run(llm_cfg) is True
+
+
+def test_should_enable_llm_correction_for_this_run_launchd_env_invalid_falls_back(monkeypatch) -> None:
+    llm_cfg = SimpleNamespace(mode="never")
+    monkeypatch.setenv("XPC_SERVICE_NAME", "com.moonshineflow.daemon")
+    monkeypatch.setenv("MFLOW_LLM_ENABLED", "oops")
+    assert cli._should_enable_llm_correction_for_this_run(llm_cfg) is False
+
+
+def test_cmd_install_launch_agent_interactive_yes_preflight_failure_sets_false(
+    monkeypatch,
+    capsys,
+) -> None:
+    monkeypatch.setattr(cli, "_resolve_config_path", lambda _: Path("/tmp/config.toml"))
+    monkeypatch.setattr(cli, "load_config", lambda _: object())
+    monkeypatch.setattr(cli, "_is_interactive_session", lambda: True)
+    monkeypatch.setattr(cli, "_prompt_launchd_llm_enabled", lambda _current: True)
+    monkeypatch.setattr(cli, "_preflight_llm_for_launchd", lambda _config: (False, "boom"))
+    monkeypatch.setattr(cli, "read_launch_agent_plist", lambda: {})
+    monkeypatch.setattr(cli, "install_app_bundle_from_env", lambda _path=None: None)
+    monkeypatch.setattr(cli, "resolve_launch_agent_program_prefix", lambda: ["/tmp/mflow"])
+    monkeypatch.setattr(
+        cli,
+        "check_permissions_in_launchd_context",
+        lambda **_kwargs: LaunchdPermissionProbe(
+            ok=True,
+            command=["/tmp/mflow", "check-permissions", "--request"],
+            report=PermissionReport(microphone=True, accessibility=True, input_monitoring=True),
+        ),
+    )
+    called: dict[str, object] = {}
+
+    def fake_install(config_path: Path, **kwargs) -> Path:
+        called["config_path"] = config_path
+        called["kwargs"] = kwargs
+        return Path("/tmp/agent.plist")
+
+    monkeypatch.setattr(cli, "install_launch_agent", fake_install)
+    args = argparse.Namespace(
+        config=None,
+        request_permissions=True,
+        allow_missing_permissions=False,
+        verbose_bootstrap=False,
+        install_app_bundle=True,
+    )
+
+    exit_code = cli.cmd_install_launch_agent(args)
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert called["kwargs"] == {"llm_enabled_override": False}
+    assert "preflight failed" in captured.err.lower()
+    assert "Launchd LLM enabled override: false" in captured.out
+
+
+def test_cmd_restart_launch_agent_interactive_yes_preflight_failure_sets_false(
+    monkeypatch,
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plist_path = tmp_path / "com.moonshineflow.daemon.plist"
+    plist_path.write_text("plist", encoding="utf-8")
+    monkeypatch.setattr(cli, "launch_agent_path", lambda: plist_path)
+    monkeypatch.setattr(cli, "read_launch_agent_plist", lambda: {})
+    monkeypatch.setattr(cli, "_is_interactive_session", lambda: True)
+    monkeypatch.setattr(cli, "_prompt_launchd_llm_enabled", lambda _current: True)
+    monkeypatch.setattr(cli, "_resolve_config_path", lambda _value=None: Path("/tmp/config.toml"))
+    monkeypatch.setattr(cli, "load_config", lambda _path: object())
+    monkeypatch.setattr(cli, "_preflight_llm_for_launchd", lambda _config: (False, "boom"))
+    called: dict[str, object] = {}
+
+    def fake_restart(**kwargs) -> bool:
+        called["kwargs"] = kwargs
+        return True
+
+    monkeypatch.setattr(cli, "restart_launch_agent", fake_restart)
+
+    exit_code = cli.cmd_restart_launch_agent(argparse.Namespace())
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert called["kwargs"] == {"llm_enabled_override": False}
+    assert "preflight failed" in captured.err.lower()
+    assert "Launchd LLM enabled override: false" in captured.out
 
 
 def test_latest_launchd_runtime_warning_detects_not_trusted(tmp_path: Path) -> None:
@@ -1045,6 +1368,7 @@ def test_cmd_install_launch_agent_resets_tcc_when_bundle_installed(
     """install-launch-agent calls reset_app_bundle_tcc when app bundle is installed."""
     monkeypatch.setattr(cli, "_resolve_config_path", lambda _: Path("/tmp/config.toml"))
     monkeypatch.setattr(cli, "load_config", lambda _: object())
+    monkeypatch.setattr(cli, "read_launch_agent_plist", lambda: None)
     monkeypatch.setattr(
         cli,
         "install_app_bundle_from_env",
@@ -1091,6 +1415,7 @@ def test_cmd_install_launch_agent_warns_when_tcc_reset_fails(
     """install-launch-agent prints a warning to stderr when TCC reset fails, but continues."""
     monkeypatch.setattr(cli, "_resolve_config_path", lambda _: Path("/tmp/config.toml"))
     monkeypatch.setattr(cli, "load_config", lambda _: object())
+    monkeypatch.setattr(cli, "read_launch_agent_plist", lambda: None)
     monkeypatch.setattr(
         cli,
         "install_app_bundle_from_env",

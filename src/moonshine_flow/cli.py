@@ -8,9 +8,11 @@ import logging
 import os
 import platform
 import sys
-from importlib.metadata import PackageNotFoundError, version as package_version
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as package_version
 from importlib.util import find_spec
 from pathlib import Path
+from typing import Callable
 
 from moonshine_flow.app_bundle import (
     APP_BUNDLE_IDENTIFIER,
@@ -19,8 +21,9 @@ from moonshine_flow.app_bundle import (
     get_app_bundle_codesign_info,
     install_app_bundle_from_env,
 )
-from moonshine_flow.config import default_config_path, load_config
+from moonshine_flow.config import default_config_path, load_config, write_config
 from moonshine_flow.launchd import (
+    LAUNCHD_LLM_ENABLED_ENV,
     LAUNCH_AGENT_LABEL,
     consume_restart_permission_suppression,
     install_launch_agent,
@@ -39,12 +42,21 @@ from moonshine_flow.permissions import (
     format_permission_guidance,
     recommended_permission_target,
     request_accessibility_permission,
+    request_all_permissions,
     request_input_monitoring_permission,
     request_microphone_permission,
-    request_all_permissions,
     reset_app_bundle_tcc,
 )
-from moonshine_flow.text_processing.repository import CorrectionDictionaryError, CorrectionDictionaryLoadResult
+from moonshine_flow.text_processing.interfaces import ChainedTextPostProcessor, TextPostProcessor
+from moonshine_flow.text_processing.llm import (
+    LLMClientError,
+    LLMCorrectionSettings,
+    LLMPostProcessor,
+)
+from moonshine_flow.text_processing.repository import (
+    CorrectionDictionaryError,
+    CorrectionDictionaryLoadResult,
+)
 from moonshine_flow.text_processing.service import CorrectionService
 
 LOGGER = logging.getLogger(__name__)
@@ -77,6 +89,581 @@ def _load_corrections_with_diagnostics(
     except CorrectionDictionaryError as exc:
         return None, str(exc)
     return result, None
+
+
+def _normalize_optional_secret(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
+def _parse_bool_token(value: object) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        if value == 1:
+            return True
+        if value == 0:
+            return False
+        return None
+    if not isinstance(value, str):
+        return None
+    token = value.strip().lower()
+    if token in {"1", "true", "yes", "on"}:
+        return True
+    if token in {"0", "false", "no", "off"}:
+        return False
+    return None
+
+
+def _launchd_llm_enabled_override_from_payload(payload: object) -> bool | None:
+    if not isinstance(payload, dict):
+        return None
+    environment = payload.get("EnvironmentVariables")
+    if not isinstance(environment, dict):
+        return None
+    return _parse_bool_token(environment.get(LAUNCHD_LLM_ENABLED_ENV))
+
+
+def _launchd_llm_enabled_override_from_env() -> bool | None:
+    if LAUNCHD_LLM_ENABLED_ENV not in os.environ:
+        return None
+    raw = os.environ.get(LAUNCHD_LLM_ENABLED_ENV)
+    parsed = _parse_bool_token(raw)
+    if parsed is None:
+        LOGGER.warning(
+            "Ignoring invalid %s=%r (expected 1/0/true/false)",
+            LAUNCHD_LLM_ENABLED_ENV,
+            raw,
+        )
+    return parsed
+
+
+def _format_optional_bool(value: bool | None) -> str:
+    if value is True:
+        return "true"
+    if value is False:
+        return "false"
+    return "<unset>"
+
+
+def _build_llm_settings_from_config(llm_cfg: object) -> LLMCorrectionSettings | None:
+    provider = str(getattr(llm_cfg, "provider", "")).strip().lower()
+    base_url = str(getattr(llm_cfg, "base_url", "")).strip()
+    model = str(getattr(llm_cfg, "model", "")).strip()
+    if not base_url or not model:
+        return None
+    return LLMCorrectionSettings(
+        provider=provider,
+        base_url=base_url,
+        model=model,
+        timeout_seconds=float(getattr(llm_cfg, "timeout_seconds", 2.5)),
+        max_input_chars=int(getattr(llm_cfg, "max_input_chars", 500)),
+        api_key=_normalize_optional_secret(getattr(llm_cfg, "api_key", None)),
+        enabled_tools=bool(getattr(llm_cfg, "enabled_tools", False)),
+    )
+
+
+def _supports_ansi_styles() -> bool:
+    stdout_isatty = getattr(sys.stdout, "isatty", None)
+    if not callable(stdout_isatty) or not stdout_isatty():
+        return False
+    if os.environ.get("NO_COLOR") is not None:
+        return False
+    term = str(os.environ.get("TERM", "")).strip().lower()
+    if term in {"", "dumb"}:
+        return False
+    return True
+
+
+def _dim(text: str) -> str:
+    if not _supports_ansi_styles():
+        return text
+    return f"\x1b[2m{text}\x1b[0m"
+
+
+def _display_value(value: object) -> str:
+    if value is None:
+        return "<unset>"
+    text = str(value)
+    if text == "":
+        return "<empty>"
+    return text
+
+
+def _display_secret(value: str | None) -> str:
+    if value:
+        return "<SET>"
+    return "<unset>"
+
+
+def _format_prompt(
+    label: str,
+    default_display: str,
+    *,
+    current_display: str | None = None,
+    suffix: str | None = None,
+) -> str:
+    current = current_display if current_display is not None else default_display
+    prompt = f"{label} [{default_display}] {_dim(f'(current: {current})')}"
+    if suffix:
+        prompt += f" {suffix}"
+    return f"{prompt}: "
+
+
+def _print_keep(value_display: str) -> None:
+    print(_dim(f"keep: {value_display}"))
+
+
+def _prompt_text(label: str, default: str) -> str:
+    raw = input(
+        _format_prompt(
+            label,
+            default,
+            current_display=_display_value(default),
+        )
+    ).strip()
+    if raw == "":
+        _print_keep(_display_value(default))
+        return default
+    return raw
+
+
+def _prompt_optional_text(label: str, default: str | None) -> str | None:
+    default_display = "" if default is None else default
+    raw = input(
+        _format_prompt(
+            label,
+            default_display,
+            current_display=_display_value(default),
+            suffix="(Enter to keep, '-' to unset)",
+        )
+    ).strip()
+    if raw == "":
+        _print_keep(_display_value(default))
+        return default
+    if raw == "-":
+        return None
+    return raw
+
+
+def _prompt_optional_secret(label: str, default: str | None) -> str | None:
+    default_display = "<SET>" if default else ""
+    raw = input(
+        _format_prompt(
+            label,
+            default_display,
+            current_display=_display_secret(default),
+            suffix="(Enter to keep, '-' to unset)",
+        )
+    ).strip()
+    if raw == "":
+        _print_keep(_display_secret(default))
+        return default
+    if raw == "-":
+        return None
+    return raw
+
+
+def _prompt_bool(label: str, default: bool) -> bool:
+    suffix = "Y/n" if default else "y/N"
+    while True:
+        raw = input(
+            _format_prompt(
+                label,
+                suffix,
+                current_display=str(default).lower(),
+            )
+        ).strip().lower()
+        if raw == "":
+            _print_keep(str(default).lower())
+            return default
+        if raw in {"y", "yes", "true", "1", "on"}:
+            return True
+        if raw in {"n", "no", "false", "0", "off"}:
+            return False
+        print("Please enter y or n.")
+
+
+def _prompt_choice(label: str, default: str, choices: list[str]) -> str:
+    if not choices:
+        raise ValueError("choices must not be empty")
+
+    allowed = {choice.lower(): choice for choice in choices}
+    default_index = 1
+    for idx, choice in enumerate(choices, start=1):
+        if choice == default:
+            default_index = idx
+            break
+
+    while True:
+        print(f"{label} {_dim(f'(current: {default})')}")
+        for idx, choice in enumerate(choices, start=1):
+            marker = _dim(" (current)") if choice == default else ""
+            print(f"  {idx}. {choice}{marker}")
+
+        raw = input(f"Select number [{default_index}]: ").strip()
+        if raw == "":
+            _print_keep(default)
+            return default
+        if raw.isdigit():
+            selected = int(raw)
+            if 1 <= selected <= len(choices):
+                return choices[selected - 1]
+            print(f"Please choose a number between 1 and {len(choices)}.")
+            continue
+        choice = allowed.get(raw.lower())
+        if choice is not None:
+            return choice
+        print(f"Please choose a number between 1 and {len(choices)}.")
+
+
+def _prompt_int(
+    label: str,
+    default: int,
+    *,
+    minimum: int | None = None,
+    maximum: int | None = None,
+) -> int:
+    while True:
+        raw = input(
+            _format_prompt(
+                label,
+                str(default),
+                current_display=str(default),
+            )
+        ).strip()
+        if raw == "":
+            value = default
+        else:
+            try:
+                value = int(raw)
+            except ValueError:
+                print("Please enter an integer.")
+                continue
+        if minimum is not None and value < minimum:
+            print(f"Please enter a value >= {minimum}.")
+            continue
+        if maximum is not None and value > maximum:
+            print(f"Please enter a value <= {maximum}.")
+            continue
+        if raw == "":
+            _print_keep(str(default))
+        return value
+
+
+def _prompt_float(
+    label: str,
+    default: float,
+    *,
+    minimum: float | None = None,
+    maximum: float | None = None,
+) -> float:
+    while True:
+        raw = input(
+            _format_prompt(
+                label,
+                str(default),
+                current_display=str(default),
+            )
+        ).strip()
+        if raw == "":
+            value = default
+        else:
+            try:
+                value = float(raw)
+            except ValueError:
+                print("Please enter a number.")
+                continue
+        if minimum is not None and value < minimum:
+            print(f"Please enter a value >= {minimum}.")
+            continue
+        if maximum is not None and value > maximum:
+            print(f"Please enter a value <= {maximum}.")
+            continue
+        if raw == "":
+            _print_keep(str(default))
+        return value
+
+
+def _prompt_input_device(default: str | int | None) -> str | int | None:
+    default_display = "" if default is None else str(default)
+    raw = input(
+        _format_prompt(
+            "audio.input_device",
+            default_display,
+            current_display=_display_value(default),
+            suffix="(name/index, Enter to keep, '-' to unset)",
+        )
+    ).strip()
+    if raw == "":
+        _print_keep(_display_value(default))
+        return default
+    if raw == "-":
+        return None
+    if raw.lstrip("-").isdigit():
+        return int(raw)
+    return raw
+
+
+def _is_interactive_session() -> bool:
+    stdin = getattr(sys.stdin, "isatty", None)
+    stdout = getattr(sys.stdout, "isatty", None)
+    return bool(callable(stdin) and stdin() and callable(stdout) and stdout())
+
+
+def _prompt_llm_correction_for_this_run() -> bool:
+    try:
+        answer = input("Enable LLM post-correction for this run? [y/N]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return False
+    return answer in {"y", "yes"}
+
+
+def _prompt_launchd_llm_enabled(current: bool | None) -> bool:
+    default = current if current is not None else False
+    return _prompt_bool("Enable LLM correction for launchd runs", default)
+
+
+def _preflight_llm_for_launchd(config: object) -> tuple[bool, str | None]:
+    llm_cfg = getattr(getattr(config, "text", None), "llm_correction", None)
+    if llm_cfg is None:
+        return False, "text.llm_correction is missing"
+    settings = _build_llm_settings_from_config(llm_cfg)
+    if settings is None:
+        return False, "base_url/model is missing"
+    try:
+        processor = LLMPostProcessor(settings)
+        processor.preflight()
+    except Exception as exc:
+        return False, str(exc)
+    return True, None
+
+
+def _resolve_launchd_llm_enabled_override_for_command(
+    *,
+    current_override: bool | None,
+    preflight_func: Callable[[], tuple[bool, str | None]],
+) -> bool | None:
+    if not _is_interactive_session():
+        print(
+            f"No TTY; keeping existing launchd LLM override: "
+            f"{_format_optional_bool(current_override)}"
+        )
+        return current_override
+
+    selected = _prompt_launchd_llm_enabled(current_override)
+    if not selected:
+        return False
+
+    ok, reason = preflight_func()
+    if ok:
+        return True
+    print(
+        "Warning: LLM preflight failed during install/restart; "
+        "launchd LLM override set to false.",
+        file=sys.stderr,
+    )
+    if reason:
+        print(f"Preflight detail: {reason}", file=sys.stderr)
+    return False
+
+
+def _should_enable_llm_correction_for_this_run(llm_cfg: object) -> bool:
+    in_launchd_context = os.environ.get("XPC_SERVICE_NAME") == LAUNCH_AGENT_LABEL
+    if in_launchd_context:
+        launchd_override = _launchd_llm_enabled_override_from_env()
+        if launchd_override is not None:
+            return launchd_override
+
+    mode = str(getattr(llm_cfg, "mode", "never")).strip().lower()
+    if mode == "always":
+        return True
+    if mode == "never":
+        return False
+    if mode == "ask":
+        if not _is_interactive_session():
+            LOGGER.info(
+                "LLM correction mode=ask in non-interactive session; "
+                "disabling LLM correction for this run"
+            )
+            return False
+        return _prompt_llm_correction_for_this_run()
+    LOGGER.warning("Unknown LLM correction mode '%s'; disabling LLM correction", mode)
+    return False
+
+
+def _build_runtime_post_processor(
+    config: object,
+    *,
+    base_processor: TextPostProcessor,
+) -> TextPostProcessor:
+    text_cfg = getattr(config, "text", None)
+    llm_cfg = getattr(text_cfg, "llm_correction", None)
+    if llm_cfg is None or not _should_enable_llm_correction_for_this_run(llm_cfg):
+        return base_processor
+
+    settings = _build_llm_settings_from_config(llm_cfg)
+    if settings is None:
+        LOGGER.warning(
+            "LLM correction is enabled but base_url/model is missing; "
+            "continuing without LLM correction"
+        )
+        return base_processor
+
+    try:
+        llm_processor = LLMPostProcessor(settings)
+    except Exception as exc:
+        LOGGER.warning("Failed to initialize LLM correction; continuing without it (%s)", exc)
+        return base_processor
+
+    try:
+        llm_processor.preflight()
+    except LLMClientError as exc:
+        LOGGER.warning("LLM correction preflight warning: %s", exc)
+    except Exception as exc:
+        LOGGER.warning("Unexpected LLM preflight failure: %s", exc)
+
+    LOGGER.info(
+        "LLM correction enabled: provider=%s base_url=%s model=%s timeout=%.2fs max_input_chars=%d",
+        settings.provider,
+        settings.base_url,
+        settings.model,
+        settings.timeout_seconds,
+        settings.max_input_chars,
+    )
+    return ChainedTextPostProcessor([base_processor, llm_processor])
+
+
+def _format_secret_state(secret: str | None) -> str:
+    if not secret:
+        return "UNSET"
+    return "SET"
+
+
+def cmd_init(args: argparse.Namespace) -> int:
+    if not _is_interactive_session():
+        print("`mflow init` requires an interactive terminal.", file=sys.stderr)
+        return 2
+
+    config_path = _resolve_config_path(args.config)
+    config = load_config(config_path)
+
+    print(f"Config: {config_path}")
+    print("Press Enter to keep current values. Use '-' to unset optional fields.")
+    print(_dim("(current: ...) and keep lines are shown in dim text."))
+    print("")
+    try:
+        config.hotkey.key = _prompt_text("hotkey.key", config.hotkey.key)
+
+        config.audio.sample_rate = _prompt_int("audio.sample_rate", config.audio.sample_rate, minimum=1)
+        config.audio.channels = _prompt_int("audio.channels", config.audio.channels, minimum=1)
+        config.audio.dtype = _prompt_text("audio.dtype", config.audio.dtype)
+        config.audio.max_record_seconds = _prompt_int(
+            "audio.max_record_seconds",
+            config.audio.max_record_seconds,
+            minimum=1,
+        )
+        config.audio.release_tail_seconds = _prompt_float(
+            "audio.release_tail_seconds",
+            float(config.audio.release_tail_seconds),
+            minimum=0.0,
+            maximum=1.0,
+        )
+        config.audio.trailing_silence_seconds = _prompt_float(
+            "audio.trailing_silence_seconds",
+            float(config.audio.trailing_silence_seconds),
+            minimum=0.0,
+            maximum=1.0,
+        )
+        config.audio.input_device = _prompt_input_device(config.audio.input_device)
+        audio_policy_choices = [policy.value for policy in type(config.audio.input_device_policy)]
+        selected_audio_policy = _prompt_choice(
+            "audio.input_device_policy",
+            config.audio.input_device_policy.value,
+            audio_policy_choices,
+        )
+        config.audio.input_device_policy = type(config.audio.input_device_policy)(selected_audio_policy)
+
+        model_size_choices = [size.value for size in type(config.model.size)]
+        selected_model_size = _prompt_choice("model.size", config.model.size.value, model_size_choices)
+        config.model.size = type(config.model.size)(selected_model_size)
+        config.model.language = _prompt_text("model.language", config.model.language)
+        config.model.device = _prompt_text("model.device", config.model.device)
+
+        output_mode_choices = [mode.value for mode in type(config.output.mode)]
+        selected_output_mode = _prompt_choice(
+            "output.mode",
+            config.output.mode.value,
+            output_mode_choices,
+        )
+        config.output.mode = type(config.output.mode)(selected_output_mode)
+        config.output.paste_shortcut = _prompt_text("output.paste_shortcut", config.output.paste_shortcut)
+
+        config.runtime.log_level = _prompt_text("runtime.log_level", config.runtime.log_level)
+        config.runtime.notify_on_error = _prompt_bool(
+            "runtime.notify_on_error",
+            bool(config.runtime.notify_on_error),
+        )
+
+        config.text.dictionary_path = _prompt_optional_text(
+            "text.dictionary_path",
+            config.text.dictionary_path,
+        )
+
+        llm_mode_choices = [mode.value for mode in type(config.text.llm_correction.mode)]
+        selected_llm_mode = _prompt_choice(
+            "text.llm_correction.mode",
+            config.text.llm_correction.mode.value,
+            llm_mode_choices,
+        )
+        config.text.llm_correction.mode = type(config.text.llm_correction.mode)(selected_llm_mode)
+
+        llm_provider_choices = [provider.value for provider in type(config.text.llm_correction.provider)]
+        selected_llm_provider = _prompt_choice(
+            "text.llm_correction.provider",
+            config.text.llm_correction.provider.value,
+            llm_provider_choices,
+        )
+        config.text.llm_correction.provider = type(config.text.llm_correction.provider)(
+            selected_llm_provider
+        )
+        config.text.llm_correction.base_url = _prompt_text(
+            "text.llm_correction.base_url",
+            config.text.llm_correction.base_url,
+        )
+        config.text.llm_correction.model = _prompt_text(
+            "text.llm_correction.model",
+            config.text.llm_correction.model,
+        )
+        config.text.llm_correction.timeout_seconds = _prompt_float(
+            "text.llm_correction.timeout_seconds",
+            float(config.text.llm_correction.timeout_seconds),
+            minimum=0.5,
+            maximum=5.0,
+        )
+        config.text.llm_correction.max_input_chars = _prompt_int(
+            "text.llm_correction.max_input_chars",
+            int(config.text.llm_correction.max_input_chars),
+            minimum=50,
+            maximum=5000,
+        )
+        config.text.llm_correction.api_key = _prompt_optional_secret(
+            "text.llm_correction.api_key",
+            _normalize_optional_secret(config.text.llm_correction.api_key),
+        )
+        config.text.llm_correction.enabled_tools = _prompt_bool(
+            "text.llm_correction.enabled_tools",
+            bool(config.text.llm_correction.enabled_tools),
+        )
+    except (EOFError, KeyboardInterrupt):
+        print("\nCancelled.")
+        return 130
+
+    write_config(config_path, config)
+    print(f"Updated config: {config_path}")
+    return 0
 
 
 def _has_moonshine_backend() -> bool:
@@ -145,7 +732,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         LOGGER.warning(warning.message)
     if correction_result.loaded:
         LOGGER.info(
-            "Transcription correction dictionary loaded: path=%s exact=%d regex=%d disabled_regex=%d",
+            "Transcription correction dictionary loaded: "
+            "path=%s exact=%d regex=%d disabled_regex=%d",
             correction_result.path,
             correction_result.rules.exact_count,
             correction_result.rules.regex_count,
@@ -174,7 +762,11 @@ def cmd_run(args: argparse.Namespace) -> int:
     if not report.all_granted:
         LOGGER.warning(format_permission_guidance(report))
 
-    daemon = MoonshineFlowDaemon(config, post_processor=correction_result.rules)
+    post_processor = _build_runtime_post_processor(
+        config,
+        base_processor=correction_result.rules,
+    )
+    daemon = MoonshineFlowDaemon(config, post_processor=post_processor)
     try:
         backend = daemon.transcriber.preflight_model()
         LOGGER.info("Model preflight OK (%s)", backend)
@@ -218,7 +810,13 @@ def cmd_check_permissions(args: argparse.Namespace) -> int:
 
 def cmd_install_launch_agent(args: argparse.Namespace) -> int:
     config_path = _resolve_config_path(args.config)
-    load_config(config_path)
+    config = load_config(config_path)
+    current_launchd_payload = read_launch_agent_plist()
+    current_launchd_llm_override = _launchd_llm_enabled_override_from_payload(current_launchd_payload)
+    desired_launchd_llm_override = _resolve_launchd_llm_enabled_override_for_command(
+        current_override=current_launchd_llm_override,
+        preflight_func=lambda: _preflight_llm_for_launchd(config),
+    )
     if getattr(args, "install_app_bundle", True):
         bundle_path = install_app_bundle_from_env()
         if bundle_path is not None:
@@ -299,8 +897,15 @@ def cmd_install_launch_agent(args: argparse.Namespace) -> int:
         )
         print(guidance, file=sys.stderr)
 
-    plist_path = install_launch_agent(config_path)
+    if desired_launchd_llm_override is None:
+        plist_path = install_launch_agent(config_path)
+    else:
+        plist_path = install_launch_agent(
+            config_path,
+            llm_enabled_override=desired_launchd_llm_override,
+        )
     print(f"Installed launch agent: {plist_path}")
+    print(f"Launchd LLM enabled override: {_format_optional_bool(desired_launchd_llm_override)}")
     return 0
 
 
@@ -316,8 +921,27 @@ def cmd_uninstall_launch_agent(args: argparse.Namespace) -> int:
 
 def cmd_restart_launch_agent(args: argparse.Namespace) -> int:
     del args
+    if not launch_agent_path().exists():
+        print("Launch agent is not installed.")
+        return 2
+
+    current_launchd_payload = read_launch_agent_plist()
+    current_launchd_llm_override = _launchd_llm_enabled_override_from_payload(current_launchd_payload)
+
+    def _preflight_for_restart() -> tuple[bool, str | None]:
+        config = load_config(_resolve_config_path(None))
+        return _preflight_llm_for_launchd(config)
+
+    desired_launchd_llm_override = _resolve_launchd_llm_enabled_override_for_command(
+        current_override=current_launchd_llm_override,
+        preflight_func=_preflight_for_restart,
+    )
+
     try:
-        restarted = restart_launch_agent()
+        if desired_launchd_llm_override is None:
+            restarted = restart_launch_agent()
+        else:
+            restarted = restart_launch_agent(llm_enabled_override=desired_launchd_llm_override)
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
         return 2
@@ -325,6 +949,7 @@ def cmd_restart_launch_agent(args: argparse.Namespace) -> int:
         print("Launch agent is not installed.")
         return 2
     print(f"Restarted launch agent: {launch_agent_path()}")
+    print(f"Launchd LLM enabled override: {_format_optional_bool(desired_launchd_llm_override)}")
     return 0
 
 
@@ -492,6 +1117,25 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                 f"(exact={correction_result.rules.exact_count}, "
                 f"regex={correction_result.rules.regex_count})"
             )
+    llm_cfg = getattr(getattr(config, "text", None), "llm_correction", None)
+    if llm_cfg is None:
+        print("LLM correction: DISABLED")
+    else:
+        mode = str(getattr(llm_cfg, "mode", "never"))
+        provider = str(getattr(llm_cfg, "provider", "ollama"))
+        base_url = str(getattr(llm_cfg, "base_url", ""))
+        model = str(getattr(llm_cfg, "model", ""))
+        timeout_seconds = float(getattr(llm_cfg, "timeout_seconds", 2.5))
+        max_input_chars = int(getattr(llm_cfg, "max_input_chars", 500))
+        enabled_tools = bool(getattr(llm_cfg, "enabled_tools", False))
+        api_key = _normalize_optional_secret(getattr(llm_cfg, "api_key", None))
+        print(f"LLM correction mode: {mode}")
+        print(
+            "LLM correction config: "
+            f"provider={provider} base_url={base_url} model={model} "
+            f"timeout_seconds={timeout_seconds:.2f} max_input_chars={max_input_chars} "
+            f"enabled_tools={enabled_tools} api_key={_format_secret_state(api_key)}"
+        )
     print(f"Permission target (recommended): {recommended_permission_target()}")
     launchd_payload = read_launch_agent_plist()
     out_log_path, err_log_path = launch_agent_log_paths()
@@ -499,6 +1143,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         print(f"LaunchAgent plist: MISSING ({launch_agent_path()})")
         print("Install LaunchAgent: mflow install-launch-agent")
         launchd_permission_target = None
+        print("Launchd LLM enabled override: <unset>")
     else:
         print(f"LaunchAgent plist: FOUND ({launch_agent_path()})")
         print(f"LaunchAgent label: {launchd_payload.get('Label', 'UNKNOWN')}")
@@ -507,6 +1152,8 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             print(f"LaunchAgent program: {' '.join(str(part) for part in program_args)}")
         else:
             print("LaunchAgent program: UNKNOWN")
+        launchd_llm_override = _launchd_llm_enabled_override_from_payload(launchd_payload)
+        print(f"Launchd LLM enabled override: {_format_optional_bool(launchd_llm_override)}")
         launchd_permission_target = _derive_launchd_permission_target(launchd_payload)
         if launchd_permission_target:
             print(f"Launchd permission target (recommended): {launchd_permission_target}")
@@ -614,7 +1261,10 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                 f"{launchd_permission_target}"
             )
         else:
-            print("Grant permissions for the launchd target shown above and restart the launch agent.")
+            print(
+                "Grant permissions for the launchd target shown above "
+                "and restart the launch agent."
+            )
     elif probe_error:
         print("Could not verify launchd permission state from launchctl output.")
     elif effective_warn:
@@ -655,6 +1305,10 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser = subparsers.add_parser("run", help="Run background daemon")
     run_parser.add_argument("--config", default=None, help="Path to config TOML")
     run_parser.set_defaults(func=cmd_run)
+
+    init_parser = subparsers.add_parser("init", help="Interactively edit config")
+    init_parser.add_argument("--config", default=None, help="Path to config TOML")
+    init_parser.set_defaults(func=cmd_init)
 
     check_parser = subparsers.add_parser("check-permissions", help="Check macOS permissions")
     check_parser.add_argument(

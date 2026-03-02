@@ -15,6 +15,11 @@ def test_write_example_and_load_config(tmp_path: Path) -> None:
     assert loaded.audio.release_tail_seconds == 0.25
     assert loaded.audio.trailing_silence_seconds == 0.5
     assert loaded.text.dictionary_path is None
+    assert loaded.text.llm_correction.mode.value == "never"
+    assert loaded.text.llm_correction.provider.value == "ollama"
+    assert loaded.text.llm_correction.timeout_seconds == 2.5
+    assert loaded.text.llm_correction.max_input_chars == 500
+    assert loaded.text.llm_correction.enabled_tools is False
 
 
 def test_load_config_creates_missing_file(tmp_path: Path) -> None:
@@ -163,3 +168,125 @@ notify_on_error = true
     loaded = load_config(cfg_path)
     assert loaded.audio.release_tail_seconds == 0.0
     assert loaded.audio.trailing_silence_seconds == 0.0
+
+
+def test_load_config_clamps_llm_timeout_and_input_chars(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        """
+[hotkey]
+key = "right_cmd"
+
+[audio]
+sample_rate = 16000
+channels = 1
+dtype = "float32"
+max_record_seconds = 30
+
+[model]
+size = "base"
+language = "ja"
+device = "mps"
+
+[output]
+mode = "clipboard_paste"
+paste_shortcut = "cmd+v"
+
+[runtime]
+log_level = "INFO"
+notify_on_error = true
+
+[text.llm_correction]
+mode = "always"
+provider = "ollama"
+base_url = "http://localhost:11434"
+model = "qwen2.5:7b-instruct"
+timeout_seconds = 10.0
+max_input_chars = 10
+enabled_tools = false
+""".strip(),
+        encoding="utf-8",
+    )
+
+    loaded = load_config(cfg_path)
+    assert loaded.text.llm_correction.timeout_seconds == 5.0
+    assert loaded.text.llm_correction.max_input_chars == 50
+
+
+def test_load_config_maps_legacy_disable_tools_to_enabled_tools(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        """
+[hotkey]
+key = "right_cmd"
+
+[audio]
+sample_rate = 16000
+channels = 1
+dtype = "float32"
+max_record_seconds = 30
+
+[model]
+size = "base"
+language = "ja"
+device = "mps"
+
+[output]
+mode = "clipboard_paste"
+paste_shortcut = "cmd+v"
+
+[runtime]
+log_level = "INFO"
+notify_on_error = true
+
+[text.llm_correction]
+mode = "always"
+provider = "ollama"
+base_url = "http://localhost:11434"
+model = "qwen2.5:7b-instruct"
+disable_tools = false
+""".strip(),
+        encoding="utf-8",
+    )
+
+    loaded = load_config(cfg_path)
+    assert loaded.text.llm_correction.enabled_tools is True
+
+
+def test_load_config_maps_legacy_enabled_to_mode(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        """
+[hotkey]
+key = "right_cmd"
+
+[audio]
+sample_rate = 16000
+channels = 1
+dtype = "float32"
+max_record_seconds = 30
+
+[model]
+size = "base"
+language = "ja"
+device = "mps"
+
+[output]
+mode = "clipboard_paste"
+paste_shortcut = "cmd+v"
+
+[runtime]
+log_level = "INFO"
+notify_on_error = true
+
+[text.llm_correction]
+enabled = true
+provider = "ollama"
+base_url = "http://localhost:11434"
+model = "qwen2.5:7b-instruct"
+""".strip(),
+        encoding="utf-8",
+    )
+
+    loaded = load_config(cfg_path)
+    assert loaded.text.llm_correction.mode.value == "always"

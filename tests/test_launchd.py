@@ -148,6 +148,19 @@ def test_build_launch_agent_falls_back_to_python_module(monkeypatch) -> None:
     ]
 
 
+def test_build_launch_agent_includes_llm_enabled_override(monkeypatch) -> None:
+    monkeypatch.setattr(launchd, "resolve_launch_agent_app_command", lambda: None)
+    monkeypatch.setattr(
+        launchd.shutil,
+        "which",
+        lambda name: "/usr/local/bin/mflow" if name == "mflow" else None,
+    )
+
+    payload = launchd.build_launch_agent(Path("/tmp/config.toml"), llm_enabled_override=True)
+
+    assert payload["EnvironmentVariables"] == {"MFLOW_LLM_ENABLED": "1"}
+
+
 def test_restart_launch_agent_returns_false_when_plist_missing(monkeypatch) -> None:
     monkeypatch.setattr(launchd, "launch_agent_path", lambda: Path("/tmp/missing.plist"))
 
@@ -176,6 +189,35 @@ def test_restart_launch_agent_uses_kickstart_when_available(monkeypatch, tmp_pat
     assert launchd.restart_launch_agent() is True
     assert calls == [("kickstart", "-k", "gui/501/com.moonshineflow.daemon")]
     assert marker_path.exists()
+
+
+def test_restart_launch_agent_persists_llm_override(monkeypatch, tmp_path: Path) -> None:
+    plist = tmp_path / "com.moonshineflow.daemon.plist"
+    plist.write_bytes(
+        launchd.plistlib.dumps(
+            {
+                "Label": "com.moonshineflow.daemon",
+                "ProgramArguments": ["/usr/local/bin/mflow", "run"],
+            }
+        )
+    )
+    monkeypatch.setattr(launchd, "launch_agent_path", lambda: plist)
+    marker_path = tmp_path / "restart-suppression.json"
+    monkeypatch.setattr(launchd, "launch_agent_restart_suppression_path", lambda: marker_path)
+    monkeypatch.setattr(
+        launchd.subprocess,
+        "check_output",
+        lambda *_args, **_kwargs: "501\n",
+    )
+
+    def fake_launchctl(*_args: str):
+        return SimpleNamespace(returncode=0, stderr="")
+
+    monkeypatch.setattr(launchd, "_launchctl", fake_launchctl)
+
+    assert launchd.restart_launch_agent(llm_enabled_override=False) is True
+    payload = launchd.plistlib.loads(plist.read_bytes())
+    assert payload["EnvironmentVariables"]["MFLOW_LLM_ENABLED"] == "0"
 
 
 def test_restart_launch_agent_falls_back_to_bootstrap(monkeypatch, tmp_path: Path) -> None:

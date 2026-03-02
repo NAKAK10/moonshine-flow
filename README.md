@@ -65,6 +65,7 @@ mflow doctor --launchd-check
 | --- | --- |
 | `moonshine-flow -v` | Show package version and exit (release-tag based at build time). |
 | `moonshine-flow --version` | Show package version and exit (release-tag based at build time). |
+| `moonshine-flow init` | Interactively edit `config.toml` with current values as defaults. |
 | `moonshine-flow run` | Run the background daemon. |
 | `moonshine-flow doctor` | Print runtime diagnostics and permission status. |
 | `moonshine-flow check-permissions` | Check required macOS permissions without prompting. |
@@ -199,6 +200,13 @@ Main settings:
 - `audio.input_device`: Optional fixed input device (name or index)
 - `audio.input_device_policy`: `system_default` / `external_preferred` / `playback_friendly` (used when `input_device` is unset; if omitted, behaves as `playback_friendly`)
 - `text.dictionary_path`: Optional transcription correction dictionary path
+- `text.llm_correction.mode`: `always` / `never` / `ask` (for `ask`, only interactive TTY runs prompt; non-interactive runs behave as `never`)
+- `text.llm_correction.provider`: `ollama` / `lmstudio`
+- `text.llm_correction.base_url`: Local endpoint URL
+- `text.llm_correction.model`: Model name served by the endpoint
+- `text.llm_correction.timeout_seconds`: Request timeout (clamped to `0.5..5.0`)
+- `text.llm_correction.max_input_chars`: Input cap for LLM correction (clamped to `50..5000`)
+- `text.llm_correction.enabled_tools`: Enable tool calling for supported models/endpoints (default: `false`)
 - `model.size`: `base` / `tiny`
 - `model.language`: `auto` / `ja` / `en` / etc.
 - `model.device`: `mps` / `cpu`

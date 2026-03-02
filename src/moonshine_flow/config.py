@@ -35,6 +35,21 @@ class InputDevicePolicy(StrEnum):
     PLAYBACK_FRIENDLY = "playback_friendly"
 
 
+class LLMProvider(StrEnum):
+    """Supported providers for LLM text correction."""
+
+    OLLAMA = "ollama"
+    LMSTUDIO = "lmstudio"
+
+
+class LLMCorrectionMode(StrEnum):
+    """Runtime activation mode for LLM correction."""
+
+    ALWAYS = "always"
+    NEVER = "never"
+    ASK = "ask"
+
+
 class HotkeyConfig(BaseModel):
     """Hotkey configuration."""
 
@@ -76,10 +91,24 @@ class RuntimeConfig(BaseModel):
     notify_on_error: bool = True
 
 
+class LLMCorrectionConfig(BaseModel):
+    """Optional LLM correction settings."""
+
+    mode: LLMCorrectionMode = LLMCorrectionMode.NEVER
+    provider: LLMProvider = LLMProvider.OLLAMA
+    base_url: str = "http://localhost:11434"
+    model: str = "qwen2.5:7b-instruct"
+    timeout_seconds: float = 2.5
+    max_input_chars: int = 500
+    api_key: str | None = None
+    enabled_tools: bool = False
+
+
 class TextConfig(BaseModel):
     """Transcript text post-processing configuration."""
 
     dictionary_path: str | None = None
+    llm_correction: LLMCorrectionConfig = Field(default_factory=LLMCorrectionConfig)
 
 
 class AppConfig(BaseModel):
@@ -108,6 +137,26 @@ def _clamp_audio_seconds(value: float, *, field_name: str) -> float:
     return value
 
 
+def _clamp_llm_timeout_seconds(value: float) -> float:
+    if value < 0.5:
+        LOGGER.warning("text.llm_correction.timeout_seconds=%s is below 0.5; using 0.5", value)
+        return 0.5
+    if value > 5.0:
+        LOGGER.warning("text.llm_correction.timeout_seconds=%s exceeds 5.0; using 5.0", value)
+        return 5.0
+    return value
+
+
+def _clamp_llm_max_input_chars(value: int) -> int:
+    if value < 50:
+        LOGGER.warning("text.llm_correction.max_input_chars=%s is below 50; using 50", value)
+        return 50
+    if value > 5000:
+        LOGGER.warning("text.llm_correction.max_input_chars=%s exceeds 5000; using 5000", value)
+        return 5000
+    return value
+
+
 def _dump_toml(data: dict[str, Any]) -> str:
     """Serialize TOML without requiring optional dependencies."""
     try:
@@ -128,6 +177,12 @@ def _dump_toml(data: dict[str, Any]) -> str:
             dictionary_path_line = ""
         else:
             dictionary_path_line = f"dictionary_path = \"{dictionary_path}\"\n"
+        llm_correction = data["text"].get("llm_correction", {})
+        llm_api_key = llm_correction.get("api_key")
+        if llm_api_key is None:
+            llm_api_key_line = ""
+        else:
+            llm_api_key_line = f"api_key = \"{llm_api_key}\"\n"
 
         return (
             "[hotkey]\n"
@@ -152,7 +207,42 @@ def _dump_toml(data: dict[str, Any]) -> str:
             f"log_level = \"{data['runtime']['log_level']}\"\n"
             f"notify_on_error = {str(data['runtime']['notify_on_error']).lower()}\n\n"
             "[text]\n"
-            f"{dictionary_path_line}"
+            f"{dictionary_path_line}\n"
+            "[text.llm_correction]\n"
+            f"mode = \"{llm_correction.get('mode', 'never')}\"\n"
+            f"provider = \"{llm_correction.get('provider', 'ollama')}\"\n"
+            f"base_url = \"{llm_correction.get('base_url', 'http://localhost:11434')}\"\n"
+            f"model = \"{llm_correction.get('model', 'qwen2.5:7b-instruct')}\"\n"
+            f"timeout_seconds = {llm_correction.get('timeout_seconds', 2.5)}\n"
+            f"max_input_chars = {llm_correction.get('max_input_chars', 500)}\n"
+            f"enabled_tools = {str(llm_correction.get('enabled_tools', False)).lower()}\n"
+            f"{llm_api_key_line}"
+        )
+
+
+def _migrate_legacy_llm_correction(raw: dict[str, Any]) -> None:
+    text_cfg = raw.get("text")
+    if not isinstance(text_cfg, dict):
+        return
+    llm_cfg = text_cfg.get("llm_correction")
+    if not isinstance(llm_cfg, dict):
+        return
+    if "mode" not in llm_cfg:
+        enabled = llm_cfg.get("enabled")
+        if isinstance(enabled, bool):
+            llm_cfg["mode"] = "always" if enabled else "never"
+            LOGGER.warning(
+                "text.llm_correction.enabled is deprecated; "
+                "use text.llm_correction.mode = \"always|never|ask\" instead"
+            )
+    if "enabled_tools" in llm_cfg:
+        return
+    disable_tools = llm_cfg.get("disable_tools")
+    if isinstance(disable_tools, bool):
+        llm_cfg["enabled_tools"] = not disable_tools
+        LOGGER.warning(
+            "text.llm_correction.disable_tools is deprecated; "
+            "use text.llm_correction.enabled_tools instead"
         )
 
 
@@ -169,10 +259,15 @@ def _to_primitive(value: Any) -> Any:
 def write_example_config(path: Path) -> None:
     """Write an example config file."""
     default_cfg = AppConfig()
-    if hasattr(default_cfg, "model_dump"):
-        cfg = default_cfg.model_dump(mode="json")
+    write_config(path, default_cfg)
+
+
+def write_config(path: Path, config: AppConfig) -> None:
+    """Write a concrete app config file."""
+    if hasattr(config, "model_dump"):
+        cfg = config.model_dump(mode="json")
     else:
-        cfg = default_cfg.dict()
+        cfg = config.dict()
     cfg = _to_primitive(cfg)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(_dump_toml(cfg), encoding="utf-8")
@@ -197,6 +292,7 @@ def load_config(path: Path | None = None) -> AppConfig:
     config_path = path or default_config_path()
     ensure_config_exists(config_path)
     raw = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    _migrate_legacy_llm_correction(raw)
     if hasattr(AppConfig, "model_validate"):
         config = AppConfig.model_validate(raw)
     else:
@@ -209,5 +305,11 @@ def load_config(path: Path | None = None) -> AppConfig:
     config.audio.trailing_silence_seconds = _clamp_audio_seconds(
         float(config.audio.trailing_silence_seconds),
         field_name="trailing_silence_seconds",
+    )
+    config.text.llm_correction.timeout_seconds = _clamp_llm_timeout_seconds(
+        float(config.text.llm_correction.timeout_seconds),
+    )
+    config.text.llm_correction.max_input_chars = _clamp_llm_max_input_chars(
+        int(config.text.llm_correction.max_input_chars),
     )
     return config

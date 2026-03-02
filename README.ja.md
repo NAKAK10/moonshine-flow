@@ -65,6 +65,7 @@ mflow doctor --launchd-check
 | --- | --- |
 | `moonshine-flow -v` | パッケージバージョンを表示して終了します（ビルド時にリリースタグから確定）。 |
 | `moonshine-flow --version` | パッケージバージョンを表示して終了します（ビルド時にリリースタグから確定）。 |
+| `moonshine-flow init` | 現在値をデフォルトとして `config.toml` を対話的に編集します。 |
 | `moonshine-flow run` | バックグラウンドデーモンを起動します。 |
 | `moonshine-flow doctor` | ランタイム診断と権限状態を表示します。 |
 | `moonshine-flow check-permissions` | macOS 権限の状態を確認します（プロンプトなし）。 |
@@ -198,6 +199,13 @@ mflow doctor --launchd-check
 - `audio.input_device`: 固定で使う入力デバイス（名前またはインデックス、任意）
 - `audio.input_device_policy`: `system_default` / `external_preferred` / `playback_friendly`（`input_device` 未指定時に適用。未設定時は `playback_friendly` と同じ挙動）
 - `text.dictionary_path`: 文字起こし補正辞書ファイルのパス（任意）
+- `text.llm_correction.mode`: `always` / `never` / `ask`（`ask` は対話TTY実行時のみ確認し、非対話実行では `never` 扱い）
+- `text.llm_correction.provider`: `ollama` / `lmstudio`
+- `text.llm_correction.base_url`: ローカル推論サーバーのURL
+- `text.llm_correction.model`: 使用モデル名
+- `text.llm_correction.timeout_seconds`: タイムアウト秒数（`0.5..5.0` にクランプ）
+- `text.llm_correction.max_input_chars`: LLM補正入力の最大文字数（`50..5000` にクランプ）
+- `text.llm_correction.enabled_tools`: 対応モデル/エンドポイントでツール呼び出しを有効化（既定: `false`）
 - `model.size`: `base` / `tiny`
 - `model.language`: `auto` / `ja` / `en` など
 - `model.device`: `mps` / `cpu`

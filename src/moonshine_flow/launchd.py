@@ -13,6 +13,7 @@ from pathlib import Path
 from moonshine_flow.app_bundle import resolve_launch_agent_app_command
 
 LAUNCH_AGENT_LABEL = "com.moonshineflow.daemon"
+LAUNCHD_LLM_ENABLED_ENV = "MFLOW_LLM_ENABLED"
 RESTART_PERMISSION_SUPPRESSION_TTL_SECONDS = 30
 
 
@@ -105,7 +106,11 @@ def resolve_launch_agent_program_prefix() -> list[str]:
     return _resolve_daemon_command()
 
 
-def build_launch_agent(config_path: Path) -> dict[str, object]:
+def build_launch_agent(
+    config_path: Path,
+    *,
+    llm_enabled_override: bool | None = None,
+) -> dict[str, object]:
     """Build LaunchAgent plist data."""
     stdout_path, stderr_path = launch_agent_log_paths()
     stdout_path.parent.mkdir(parents=True, exist_ok=True)
@@ -117,7 +122,7 @@ def build_launch_agent(config_path: Path) -> dict[str, object]:
         str(config_path),
     ]
 
-    return {
+    payload: dict[str, object] = {
         "Label": LAUNCH_AGENT_LABEL,
         "ProgramArguments": program_args,
         "RunAtLoad": True,
@@ -126,14 +131,26 @@ def build_launch_agent(config_path: Path) -> dict[str, object]:
         "StandardErrorPath": str(stderr_path),
         "ProcessType": "Interactive",
     }
+    if llm_enabled_override is not None:
+        payload["EnvironmentVariables"] = {
+            LAUNCHD_LLM_ENABLED_ENV: "1" if llm_enabled_override else "0",
+        }
+    return payload
 
 
-def install_launch_agent(config_path: Path) -> Path:
+def install_launch_agent(
+    config_path: Path,
+    *,
+    llm_enabled_override: bool | None = None,
+) -> Path:
     """Install or replace launchd plist and bootstrap it."""
     plist_path = launch_agent_path()
     plist_path.parent.mkdir(parents=True, exist_ok=True)
 
-    data = build_launch_agent(config_path)
+    data = build_launch_agent(
+        config_path,
+        llm_enabled_override=llm_enabled_override,
+    )
     with plist_path.open("wb") as fp:
         plistlib.dump(data, fp)
 
@@ -158,11 +175,40 @@ def uninstall_launch_agent() -> bool:
     return True
 
 
-def restart_launch_agent() -> bool:
+def _persist_launch_agent_llm_override(plist_path: Path, llm_enabled_override: bool) -> None:
+    """Persist launchd-only LLM enabled override to plist environment."""
+    try:
+        with plist_path.open("rb") as fp:
+            payload = plistlib.load(fp)
+    except (OSError, plistlib.InvalidFileException) as exc:
+        raise RuntimeError(f"launchctl restart failed: invalid plist ({exc})") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError("launchctl restart failed: invalid plist payload")
+
+    environment = payload.get("EnvironmentVariables")
+    if not isinstance(environment, dict):
+        environment = {}
+    environment = {str(key): str(value) for key, value in environment.items()}
+    environment[LAUNCHD_LLM_ENABLED_ENV] = "1" if llm_enabled_override else "0"
+    payload["EnvironmentVariables"] = environment
+
+    try:
+        with plist_path.open("wb") as fp:
+            plistlib.dump(payload, fp)
+    except OSError as exc:
+        raise RuntimeError(f"launchctl restart failed: could not update plist ({exc})") from exc
+
+
+def restart_launch_agent(
+    *,
+    llm_enabled_override: bool | None = None,
+) -> bool:
     """Restart installed launchd agent after permission changes."""
     plist_path = launch_agent_path()
     if not plist_path.exists():
         return False
+    if llm_enabled_override is not None:
+        _persist_launch_agent_llm_override(plist_path, llm_enabled_override)
 
     uid = str(subprocess.check_output(["id", "-u"], text=True).strip())
     service = f"gui/{uid}/{LAUNCH_AGENT_LABEL}"
