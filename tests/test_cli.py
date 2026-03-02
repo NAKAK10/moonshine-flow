@@ -7,6 +7,7 @@ import pytest
 
 from moonshine_flow import cli
 from moonshine_flow.permissions import LaunchdPermissionProbe, PermissionReport
+from moonshine_flow.text_processing.repository import TomlCorrectionRepository
 
 
 def test_cmd_run_requests_missing_permissions_in_launchd_context(monkeypatch) -> None:
@@ -80,7 +81,12 @@ def test_load_corrections_warns_when_explicit_path_missing(tmp_path: Path) -> No
     assert len(result.warnings) == 1
 
 
-def test_load_corrections_disables_when_default_path_missing(tmp_path: Path) -> None:
+def test_load_corrections_disables_when_default_path_missing(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        TomlCorrectionRepository,
+        "default_dictionary_path",
+        staticmethod(lambda: tmp_path / "transcription_corrections.toml"),
+    )
     config = SimpleNamespace(text=SimpleNamespace(dictionary_path=None))
 
     result, error = cli._load_corrections_with_diagnostics(

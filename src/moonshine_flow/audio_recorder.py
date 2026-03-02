@@ -47,6 +47,51 @@ class AudioRecorder:
         self._max_frames = self.sample_rate * self.max_record_seconds
 
     @staticmethod
+    def _is_stream_active_state(stream: sd.InputStream | None) -> bool:
+        if stream is None:
+            return False
+
+        try:
+            closed = getattr(stream, "closed", False)
+        except Exception:
+            return False
+        if isinstance(closed, bool) and closed:
+            return False
+
+        try:
+            active = getattr(stream, "active", None)
+        except Exception:
+            return False
+        if isinstance(active, bool):
+            return active
+
+        try:
+            stopped = getattr(stream, "stopped", None)
+        except Exception:
+            return False
+        if isinstance(stopped, bool):
+            return not stopped
+
+        # Fallback for stream doubles in tests that do not expose state.
+        return True
+
+    def _dispose_stream(self) -> None:
+        stream = self._stream
+        self._stream = None
+        if stream is None:
+            return
+
+        try:
+            stream.stop()
+        except Exception:
+            LOGGER.debug("Stream was not active during stop", exc_info=True)
+        finally:
+            try:
+                stream.close()
+            except Exception:
+                LOGGER.debug("Stream close failed", exc_info=True)
+
+    @staticmethod
     def _is_input_device(device: Any) -> bool:
         return int(device.get("max_input_channels", 0)) > 0
 
@@ -94,16 +139,23 @@ class AudioRecorder:
                 return index
 
             LOGGER.warning(
-                "Playback-friendly input policy could not find a non-Bluetooth mic; using system default"
+                "Playback-friendly input policy could not find a non-Bluetooth mic; "
+                "using system default"
             )
             return None
 
-        LOGGER.warning("Unknown input_device_policy=%s; using system default", self.input_device_policy)
+        LOGGER.warning(
+            "Unknown input_device_policy=%s; using system default",
+            self.input_device_policy,
+        )
         return None
 
     def _ensure_stream(self) -> None:
-        if self._stream is not None:
+        if self._is_stream_active_state(self._stream):
             return
+        if self._stream is not None:
+            LOGGER.warning("Detected stale audio input stream; reopening input stream")
+            self._dispose_stream()
 
         stream_kwargs: dict[str, Any] = {
             "samplerate": self.sample_rate,
@@ -124,6 +176,11 @@ class AudioRecorder:
     @property
     def is_recording(self) -> bool:
         return self._recording
+
+    def is_stream_active(self) -> bool:
+        with self._lock:
+            stream = self._stream
+        return self._is_stream_active_state(stream)
 
     def _callback(
         self,
@@ -165,14 +222,7 @@ class AudioRecorder:
 
     def stop(self) -> np.ndarray:
         """Stop recording and return audio samples."""
-        if self._stream is not None:
-            try:
-                self._stream.stop()
-            except Exception:
-                LOGGER.debug("Stream was not active during stop", exc_info=True)
-            finally:
-                self._stream.close()
-                self._stream = None
+        self._dispose_stream()
 
         with self._lock:
             self._recording = False
@@ -192,13 +242,4 @@ class AudioRecorder:
 
         if self._stream is None:
             return
-
-        try:
-            self._stream.stop()
-        except Exception:
-            LOGGER.debug("Stream was not active during close", exc_info=True)
-        finally:
-            try:
-                self._stream.close()
-            finally:
-                self._stream = None
+        self._dispose_stream()

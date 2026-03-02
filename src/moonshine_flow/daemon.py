@@ -17,6 +17,8 @@ from moonshine_flow.text_processing.interfaces import TextPostProcessor
 from moonshine_flow.transcriber import MoonshineTranscriber
 
 LOGGER = logging.getLogger(__name__)
+_HOTKEY_COOLDOWN_SECONDS = 0.25
+_RECORDING_STALE_GRACE_SECONDS = 0.5
 
 
 class MoonshineFlowDaemon:
@@ -30,6 +32,10 @@ class MoonshineFlowDaemon:
         self.config = config
         self._stop_event = threading.Event()
         self._audio_queue: queue.Queue[np.ndarray] = queue.Queue()
+        self._state_lock = threading.Lock()
+        self._transcription_in_progress = False
+        self._last_release_at_monotonic = 0.0
+        self._recording_stale_since_monotonic: float | None = None
 
         self.recorder = AudioRecorder(
             sample_rate=config.audio.sample_rate,
@@ -65,6 +71,14 @@ class MoonshineFlowDaemon:
     def _on_hotkey_down(self) -> None:
         if self._stop_event.is_set():
             return
+        with self._state_lock:
+            if self._transcription_in_progress:
+                LOGGER.info("Ignored hotkey press while transcription is in progress")
+                return
+            cooldown_until = self._last_release_at_monotonic + _HOTKEY_COOLDOWN_SECONDS
+        if time.monotonic() < cooldown_until:
+            LOGGER.debug("Ignored hotkey press during cooldown window")
+            return
         if self.recorder.is_recording:
             return
 
@@ -83,6 +97,10 @@ class MoonshineFlowDaemon:
         except Exception:
             LOGGER.exception("Failed to stop recording")
             return
+        finally:
+            with self._state_lock:
+                self._last_release_at_monotonic = time.monotonic()
+                self._recording_stale_since_monotonic = None
 
         if audio.size == 0:
             LOGGER.info("Skipped empty audio capture")
@@ -98,6 +116,8 @@ class MoonshineFlowDaemon:
             except queue.Empty:
                 continue
 
+            with self._state_lock:
+                self._transcription_in_progress = True
             try:
                 text = self.transcriber.transcribe(audio, self.config.audio.sample_rate)
                 if text:
@@ -107,7 +127,42 @@ class MoonshineFlowDaemon:
             except Exception:
                 LOGGER.exception("Transcription pipeline failed")
             finally:
+                with self._state_lock:
+                    self._transcription_in_progress = False
                 self._audio_queue.task_done()
+
+    def _recover_stale_recording_if_needed(self) -> None:
+        if not self.recorder.is_recording:
+            with self._state_lock:
+                self._recording_stale_since_monotonic = None
+            return
+        if self.recorder.is_stream_active():
+            with self._state_lock:
+                self._recording_stale_since_monotonic = None
+            return
+
+        now = time.monotonic()
+        with self._state_lock:
+            stale_since = self._recording_stale_since_monotonic
+            if stale_since is None:
+                self._recording_stale_since_monotonic = now
+                LOGGER.warning(
+                    "Detected inactive audio stream while recording; waiting for recovery grace"
+                )
+                return
+            stale_for = now - stale_since
+        if stale_for < _RECORDING_STALE_GRACE_SECONDS:
+            return
+
+        LOGGER.warning("Recovering recorder after %.2fs inactive stream while recording", stale_for)
+        try:
+            self.recorder.close()
+        except Exception:
+            LOGGER.exception("Failed to recover recorder from stale recording state")
+        finally:
+            with self._state_lock:
+                self._recording_stale_since_monotonic = None
+                self._last_release_at_monotonic = now
 
     def run_forever(self) -> None:
         """Run daemon until stop() is called."""
@@ -117,6 +172,7 @@ class MoonshineFlowDaemon:
 
         try:
             while not self._stop_event.is_set():
+                self._recover_stale_recording_if_needed()
                 time.sleep(0.2)
         finally:
             self.stop()

@@ -31,12 +31,39 @@ class _FakeStream:
         _FakeStream.closed += 1
 
 
+class _StateAwareStream:
+    created = 0
+    instances: list[_StateAwareStream] = []
+
+    def __init__(self, **kwargs):
+        del kwargs
+        _StateAwareStream.created += 1
+        self.active = False
+        self.closed = False
+        _StateAwareStream.instances.append(self)
+
+    def start(self) -> None:
+        self.active = True
+
+    def stop(self) -> None:
+        self.active = False
+
+    def close(self) -> None:
+        self.closed = True
+        self.active = False
+
+
 def _reset_fake_stream() -> None:
     _FakeStream.created = 0
     _FakeStream.started = 0
     _FakeStream.stopped = 0
     _FakeStream.closed = 0
     _FakeStream.last_kwargs = None
+
+
+def _reset_state_aware_stream() -> None:
+    _StateAwareStream.created = 0
+    _StateAwareStream.instances = []
 
 
 def test_recorder_opens_and_closes_per_recording(monkeypatch) -> None:
@@ -284,3 +311,52 @@ def test_callback_stop_resets_recording_state(monkeypatch) -> None:
         recorder._callback(chunk, 16000, None, 0)
 
     assert recorder.is_recording is False
+
+
+def test_start_reopens_stale_stream_after_callback_stop(monkeypatch) -> None:
+    _reset_state_aware_stream()
+    monkeypatch.setattr("moonshine_flow.audio_recorder.sd.InputStream", _StateAwareStream)
+
+    recorder = AudioRecorder(
+        sample_rate=10,
+        channels=1,
+        dtype="float32",
+        max_record_seconds=1,
+    )
+
+    recorder.start()
+    assert recorder._stream is not None
+    first_stream = recorder._stream
+
+    chunk = np.ones((10, 1), dtype=np.float32)
+    with pytest.raises(audio_recorder_module.sd.CallbackStop):
+        recorder._callback(chunk, 10, None, 0)
+
+    assert recorder.is_recording is False
+    first_stream.active = False
+
+    recorder.start()
+    assert _StateAwareStream.created == 2
+    assert first_stream.closed is True
+    assert recorder._stream is not first_stream
+    assert recorder.is_recording is True
+
+
+def test_is_stream_active_reflects_stream_state(monkeypatch) -> None:
+    _reset_state_aware_stream()
+    monkeypatch.setattr("moonshine_flow.audio_recorder.sd.InputStream", _StateAwareStream)
+
+    recorder = AudioRecorder(
+        sample_rate=10,
+        channels=1,
+        dtype="float32",
+        max_record_seconds=1,
+    )
+    assert recorder.is_stream_active() is False
+
+    recorder.start()
+    assert recorder.is_stream_active() is True
+
+    assert recorder._stream is not None
+    recorder._stream.active = False
+    assert recorder.is_stream_active() is False
