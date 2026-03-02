@@ -14,9 +14,8 @@ class _FakeRecorder:
         dtype: str,
         max_record_seconds: int,
         input_device: str | int | None = None,
-        input_device_policy: str = "system_default",
     ) -> None:
-        del sample_rate, channels, dtype, max_record_seconds, input_device, input_device_policy
+        del sample_rate, channels, dtype, max_record_seconds, input_device
         self.is_recording = False
         self.stream_active = True
         self.start_calls = 0

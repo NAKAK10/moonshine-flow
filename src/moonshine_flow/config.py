@@ -27,14 +27,6 @@ class OutputMode(StrEnum):
     CLIPBOARD_PASTE = "clipboard_paste"
 
 
-class InputDevicePolicy(StrEnum):
-    """Input device selection policy when input_device is unset."""
-
-    SYSTEM_DEFAULT = "system_default"
-    EXTERNAL_PREFERRED = "external_preferred"
-    PLAYBACK_FRIENDLY = "playback_friendly"
-
-
 class LLMProvider(StrEnum):
     """Supported providers for LLM text correction."""
 
@@ -65,8 +57,7 @@ class AudioConfig(BaseModel):
     max_record_seconds: int = 30
     release_tail_seconds: float = 0.25
     trailing_silence_seconds: float = 0.5
-    input_device: str | int | None = None
-    input_device_policy: InputDevicePolicy = InputDevicePolicy.PLAYBACK_FRIENDLY
+    input_device: int | str | None = None
 
 
 class ModelConfig(BaseModel):
@@ -168,9 +159,9 @@ def _dump_toml(data: dict[str, Any]) -> str:
         if input_device is None:
             input_device_line = ""
         elif isinstance(input_device, str):
-            input_device_line = f"input_device = \"{input_device}\"\\n"
+            input_device_line = f"input_device = \"{input_device}\"\n"
         else:
-            input_device_line = f"input_device = {input_device}\\n"
+            input_device_line = f"input_device = {input_device}\n"
 
         dictionary_path = data["text"].get("dictionary_path")
         if dictionary_path is None:
@@ -195,7 +186,7 @@ def _dump_toml(data: dict[str, Any]) -> str:
             f"release_tail_seconds = {data['audio']['release_tail_seconds']}\n"
             f"trailing_silence_seconds = {data['audio']['trailing_silence_seconds']}\n"
             f"{input_device_line}\n"
-            f"input_device_policy = \"{data['audio']['input_device_policy']}\"\n\n"
+            "\n"
             "[model]\n"
             f"size = \"{data['model']['size']}\"\n"
             f"language = \"{data['model']['language']}\"\n"

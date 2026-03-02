@@ -399,14 +399,14 @@ def test_prompt_choice_accepts_number(monkeypatch, capsys) -> None:
     monkeypatch.setattr("builtins.input", lambda _prompt: "2")
     monkeypatch.setattr(cli, "_supports_ansi_styles", lambda: False)
     value = cli._prompt_choice(
-        "audio.input_device_policy",
-        "playback_friendly",
-        ["system_default", "external_preferred", "playback_friendly"],
+        "model.size",
+        "tiny",
+        ["tiny", "base"],
     )
     captured = capsys.readouterr()
-    assert value == "external_preferred"
-    assert "1. system_default" in captured.out
-    assert "2. external_preferred" in captured.out
+    assert value == "base"
+    assert "1. tiny" in captured.out
+    assert "2. base" in captured.out
 
 
 def test_cmd_init_updates_values_and_keeps_others(monkeypatch, tmp_path: Path, capsys) -> None:
@@ -425,7 +425,6 @@ def test_cmd_init_updates_values_and_keeps_others(monkeypatch, tmp_path: Path, c
             "",  # audio.release_tail_seconds
             "",  # audio.trailing_silence_seconds
             "",  # audio.input_device
-            "",  # audio.input_device_policy
             "",  # model.size
             "ja",  # model.language
             "",  # model.device
@@ -456,6 +455,111 @@ def test_cmd_init_updates_values_and_keeps_others(monkeypatch, tmp_path: Path, c
     assert updated.model.language == "ja"
     assert updated.text.llm_correction.mode.value == "ask"
     assert updated.text.llm_correction.model == "llama3.2:latest"
+
+
+def test_list_devices_parser_has_config_option() -> None:
+    parser = cli.build_parser()
+    args = parser.parse_args(["list", "devices", "--config", "/tmp/config.toml"])
+    assert args.command == "list"
+    assert args.config == "/tmp/config.toml"
+    assert args.list_target == "devices"
+
+
+def test_list_parser_without_target_shows_help_command() -> None:
+    parser = cli.build_parser()
+    args = parser.parse_args(["list"])
+    assert args.command == "list"
+    assert args.list_target is None
+    assert args.func == cli.cmd_list
+
+
+def test_list_parser_alias_accepts_devices_target() -> None:
+    parser = cli.build_parser()
+    args = parser.parse_args(["list", "devices"])
+    assert args.command == "list"
+    assert args.list_target == "devices"
+    assert args.func == cli.cmd_list_devices
+
+
+def test_cmd_list_shows_available_commands(capsys) -> None:
+    exit_code = cli.cmd_list(argparse.Namespace())
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "Available list commands" in captured.out
+    assert "mflow list devices" in captured.out
+
+
+def test_cmd_list_devices_requires_interactive_terminal(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(cli, "_is_interactive_session", lambda: False)
+    exit_code = cli.cmd_list_devices(argparse.Namespace(config=None))
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert "interactive terminal" in captured.err
+
+
+def test_cmd_list_devices_selects_device_and_updates_config(monkeypatch, tmp_path: Path, capsys) -> None:
+    cfg_path = tmp_path / "config.toml"
+    monkeypatch.setattr(cli, "_resolve_config_path", lambda _: cfg_path)
+    monkeypatch.setattr(cli, "_is_interactive_session", lambda: True)
+    monkeypatch.setattr(cli, "_supports_ansi_styles", lambda: False)
+    monkeypatch.setattr(
+        cli,
+        "_query_input_devices",
+        lambda: (
+            [
+                {"index": 0, "name": "MacBook Microphone", "max_input_channels": 1},
+                {"index": 3, "name": "USB Microphone", "max_input_channels": 1},
+            ],
+            0,
+        ),
+    )
+    monkeypatch.setattr("builtins.input", lambda _prompt: "2")
+
+    exit_code = cli.cmd_list_devices(argparse.Namespace(config=None))
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "audio.input_device = 3" in captured.out
+    updated = cli.load_config(cfg_path)
+    assert updated.audio.input_device == 3
+
+
+def test_cmd_list_devices_selects_unset_and_updates_config(monkeypatch, tmp_path: Path, capsys) -> None:
+    cfg_path = tmp_path / "config.toml"
+    cfg = cli.load_config(cfg_path)
+    cfg.audio.input_device = 7
+    cli.write_config(cfg_path, cfg)
+
+    monkeypatch.setattr(cli, "_resolve_config_path", lambda _: cfg_path)
+    monkeypatch.setattr(cli, "_is_interactive_session", lambda: True)
+    monkeypatch.setattr(cli, "_supports_ansi_styles", lambda: False)
+    monkeypatch.setattr(
+        cli,
+        "_query_input_devices",
+        lambda: ([{"index": 1, "name": "Mic", "max_input_channels": 1}], 1),
+    )
+    monkeypatch.setattr("builtins.input", lambda _prompt: "0")
+
+    exit_code = cli.cmd_list_devices(argparse.Namespace(config=None))
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "audio.input_device = <unset>" in captured.out
+    updated = cli.load_config(cfg_path)
+    assert updated.audio.input_device is None
+
+
+def test_cmd_list_devices_reports_query_failure(monkeypatch, tmp_path: Path, capsys) -> None:
+    cfg_path = tmp_path / "config.toml"
+    monkeypatch.setattr(cli, "_resolve_config_path", lambda _: cfg_path)
+    monkeypatch.setattr(cli, "_is_interactive_session", lambda: True)
+    monkeypatch.setattr(cli, "_query_input_devices", lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+
+    exit_code = cli.cmd_list_devices(argparse.Namespace(config=None))
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert "boom" in captured.err
 
 
 def test_install_app_bundle_parser_has_path() -> None:

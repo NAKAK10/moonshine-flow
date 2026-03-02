@@ -12,7 +12,7 @@ from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 from importlib.util import find_spec
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 from moonshine_flow.app_bundle import (
     APP_BUNDLE_IDENTIFIER,
@@ -418,7 +418,7 @@ def _prompt_float(
         return value
 
 
-def _prompt_input_device(default: str | int | None) -> str | int | None:
+def _prompt_input_device(default: int | str | None) -> int | str | None:
     default_display = "" if default is None else str(default)
     raw = input(
         _format_prompt(
@@ -436,6 +436,139 @@ def _prompt_input_device(default: str | int | None) -> str | int | None:
     if raw.lstrip("-").isdigit():
         return int(raw)
     return raw
+
+
+def _query_input_devices() -> tuple[list[dict[str, Any]], int | None]:
+    try:
+        import sounddevice as sd
+    except Exception as exc:
+        raise RuntimeError(f"sounddevice is unavailable: {exc}") from exc
+
+    try:
+        raw_devices = sd.query_devices()
+    except Exception as exc:
+        raise RuntimeError(f"Failed to query audio devices: {exc}") from exc
+
+    devices: list[dict[str, Any]] = []
+    for index, device in enumerate(raw_devices):
+        get_field = getattr(device, "get", None)
+        if not callable(get_field):
+            continue
+        max_input_channels = int(get_field("max_input_channels", 0))
+        if max_input_channels <= 0:
+            continue
+        name = str(get_field("name", f"Device {index}")).strip() or f"Device {index}"
+        devices.append(
+            {
+                "index": index,
+                "name": name,
+                "max_input_channels": max_input_channels,
+            }
+        )
+
+    default_input_index: int | None = None
+    try:
+        default_device = getattr(sd, "default", None)
+        default_pair = getattr(default_device, "device", None)
+        if isinstance(default_pair, (list, tuple)) and default_pair:
+            default_candidate = default_pair[0]
+            default_index = int(default_candidate)
+            if default_index >= 0:
+                default_input_index = default_index
+    except Exception:
+        default_input_index = None
+
+    return devices, default_input_index
+
+
+def _matches_configured_input_device(configured: int | str | None, *, index: int, name: str) -> bool:
+    if configured is None:
+        return False
+    if isinstance(configured, int):
+        return configured == index
+    return configured == name
+
+
+def cmd_list(args: argparse.Namespace) -> int:
+    del args
+    print("Available list commands:")
+    print("  devices    List audio input devices and save selected device to config")
+    print("")
+    print("Usage:")
+    print("  mflow list devices")
+    return 0
+
+
+def cmd_list_devices(args: argparse.Namespace) -> int:
+    if not _is_interactive_session():
+        print("`mflow list devices` requires an interactive terminal.", file=sys.stderr)
+        return 2
+
+    config_path = _resolve_config_path(args.config)
+    config = load_config(config_path)
+
+    try:
+        devices, default_input_index = _query_input_devices()
+    except Exception as exc:
+        print(_yellow(f"Warning: {exc}", stderr=True), file=sys.stderr)
+        return 2
+
+    current_input_device = getattr(getattr(config, "audio", None), "input_device", None)
+    default_choice: int | None = 0 if current_input_device is None else None
+
+    print(f"Config: {config_path}")
+    print(f"Current audio.input_device: {_display_value(current_input_device)}")
+    print("Select input device to save into config:")
+    current_marker = " (current)" if current_input_device is None else ""
+    print(f"  0. system default (unset){current_marker}")
+    for menu_index, device in enumerate(devices, start=1):
+        index = int(device["index"])
+        name = str(device["name"])
+        max_input_channels = int(device["max_input_channels"])
+        markers: list[str] = []
+        if index == default_input_index:
+            markers.append("default")
+        if _matches_configured_input_device(current_input_device, index=index, name=name):
+            markers.append("current")
+            default_choice = menu_index
+        marker_text = f" ({', '.join(markers)})" if markers else ""
+        print(f"  {menu_index}. [{index}] {name} (inputs={max_input_channels}){marker_text}")
+
+    if default_choice is None:
+        print(_yellow("Warning: current audio.input_device is not in the detected input device list."))
+
+    try:
+        while True:
+            prompt_default = "" if default_choice is None else str(default_choice)
+            raw = input(f"Select number [{prompt_default}]: ").strip()
+            if raw == "":
+                if default_choice is None:
+                    print("Please choose a number from the list.")
+                    continue
+                selected = default_choice
+                _print_keep(str(default_choice))
+            elif raw.isdigit():
+                selected = int(raw)
+            else:
+                print(f"Please choose a number between 0 and {len(devices)}.")
+                continue
+
+            if 0 <= selected <= len(devices):
+                break
+            print(f"Please choose a number between 0 and {len(devices)}.")
+    except (EOFError, KeyboardInterrupt):
+        print("\nCancelled.")
+        return 130
+
+    if selected == 0:
+        config.audio.input_device = None
+    else:
+        config.audio.input_device = int(devices[selected - 1]["index"])
+
+    write_config(config_path, config)
+    print(_green(f"Updated config: {config_path}"))
+    print(f"audio.input_device = {_display_value(config.audio.input_device)}")
+    return 0
 
 
 def _is_interactive_session() -> bool:
@@ -630,13 +763,6 @@ def cmd_init(args: argparse.Namespace) -> int:
             maximum=1.0,
         )
         config.audio.input_device = _prompt_input_device(config.audio.input_device)
-        audio_policy_choices = [policy.value for policy in type(config.audio.input_device_policy)]
-        selected_audio_policy = _prompt_choice(
-            "audio.input_device_policy",
-            config.audio.input_device_policy.value,
-            audio_policy_choices,
-        )
-        config.audio.input_device_policy = type(config.audio.input_device_policy)(selected_audio_policy)
 
         model_size_choices = [size.value for size in type(config.model.size)]
         selected_model_size = _prompt_choice("model.size", config.model.size.value, model_size_choices)
@@ -1399,6 +1525,19 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser = subparsers.add_parser("init", help="Interactively edit config")
     init_parser.add_argument("--config", default=None, help="Path to config TOML")
     init_parser.set_defaults(func=cmd_init)
+
+    list_parser = subparsers.add_parser(
+        "list",
+        help="List available resources",
+    )
+    list_parser.set_defaults(func=cmd_list)
+    list_subparsers = list_parser.add_subparsers(dest="list_target")
+    list_devices_parser = list_subparsers.add_parser(
+        "devices",
+        help="List audio input devices and save selected device to config",
+    )
+    list_devices_parser.add_argument("--config", default=None, help="Path to config TOML")
+    list_devices_parser.set_defaults(func=cmd_list_devices)
 
     check_parser = subparsers.add_parser("check-permissions", help="Check macOS permissions")
     check_parser.add_argument(

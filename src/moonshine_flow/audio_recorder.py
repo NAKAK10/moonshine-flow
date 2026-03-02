@@ -11,15 +11,6 @@ import sounddevice as sd
 
 LOGGER = logging.getLogger(__name__)
 
-_BLUETOOTH_INPUT_KEYWORDS = (
-    "airpods",
-    "bluetooth",
-    "hands-free",
-    "handsfree",
-    "hfp",
-    "headset",
-)
-
 
 class AudioRecorder:
     """Record short microphone audio into memory."""
@@ -30,15 +21,13 @@ class AudioRecorder:
         channels: int,
         dtype: str,
         max_record_seconds: int,
-        input_device: str | int | None = None,
-        input_device_policy: str = "system_default",
+        input_device: int | str | None = None,
     ) -> None:
         self.sample_rate = sample_rate
         self.channels = channels
         self.dtype = dtype
         self.max_record_seconds = max_record_seconds
         self.input_device = input_device
-        self.input_device_policy = input_device_policy
 
         self._lock = threading.Lock()
         self._frames: list[np.ndarray] = []
@@ -91,64 +80,8 @@ class AudioRecorder:
             except Exception:
                 LOGGER.debug("Stream close failed", exc_info=True)
 
-    @staticmethod
-    def _is_input_device(device: Any) -> bool:
-        return int(device.get("max_input_channels", 0)) > 0
-
-    @staticmethod
-    def _is_likely_bluetooth_input(device: Any) -> bool:
-        name = str(device.get("name", "")).lower()
-        return any(keyword in name for keyword in _BLUETOOTH_INPUT_KEYWORDS)
-
-    def _resolve_input_device(self) -> str | int | None:
-        if self.input_device is not None:
-            return self.input_device
-
-        if self.input_device_policy == "system_default":
-            return None
-
-        try:
-            devices = sd.query_devices()
-            default_input_index = int(sd.default.device[0])
-        except Exception:
-            LOGGER.debug("Failed to query audio devices; using system default input", exc_info=True)
-            return None
-
-        if self.input_device_policy == "external_preferred":
-            for index, device in enumerate(devices):
-                if not self._is_input_device(device):
-                    continue
-                if index == default_input_index:
-                    continue
-                return index
-            return None
-
-        if self.input_device_policy == "playback_friendly":
-            default_input = None
-            if 0 <= default_input_index < len(devices):
-                default_input = devices[default_input_index]
-
-            if default_input is not None and not self._is_likely_bluetooth_input(default_input):
-                return None
-
-            for index, device in enumerate(devices):
-                if not self._is_input_device(device):
-                    continue
-                if self._is_likely_bluetooth_input(device):
-                    continue
-                return index
-
-            LOGGER.warning(
-                "Playback-friendly input policy could not find a non-Bluetooth mic; "
-                "using system default"
-            )
-            return None
-
-        LOGGER.warning(
-            "Unknown input_device_policy=%s; using system default",
-            self.input_device_policy,
-        )
-        return None
+    def _resolve_input_device(self) -> int | str | None:
+        return self.input_device
 
     def _ensure_stream(self) -> None:
         if self._is_stream_active_state(self._stream):
