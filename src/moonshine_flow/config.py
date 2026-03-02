@@ -98,7 +98,7 @@ class LLMCorrectionConfig(BaseModel):
     provider: LLMProvider = LLMProvider.OLLAMA
     base_url: str = "http://localhost:11434"
     model: str = "qwen2.5:7b-instruct"
-    timeout_seconds: float = 2.5
+    timeout_seconds: float = 5.0
     max_input_chars: int = 500
     api_key: str | None = None
     enabled_tools: bool = False
@@ -213,7 +213,7 @@ def _dump_toml(data: dict[str, Any]) -> str:
             f"provider = \"{llm_correction.get('provider', 'ollama')}\"\n"
             f"base_url = \"{llm_correction.get('base_url', 'http://localhost:11434')}\"\n"
             f"model = \"{llm_correction.get('model', 'qwen2.5:7b-instruct')}\"\n"
-            f"timeout_seconds = {llm_correction.get('timeout_seconds', 2.5)}\n"
+            f"timeout_seconds = {llm_correction.get('timeout_seconds', 5.0)}\n"
             f"max_input_chars = {llm_correction.get('max_input_chars', 500)}\n"
             f"enabled_tools = {str(llm_correction.get('enabled_tools', False)).lower()}\n"
             f"{llm_api_key_line}"

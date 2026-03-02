@@ -55,7 +55,7 @@ provider = "ollama"
 base_url = "http://localhost:11434"
 model = "qwen2.5:7b-instruct"
 # Clamped to [0.5, 5.0]
-timeout_seconds = 2.5
+timeout_seconds = 5.0
 # Clamped to [50, 5000]
 max_input_chars = 500
 # Reserved for OpenAI-compatible servers; ignored by most local setups.

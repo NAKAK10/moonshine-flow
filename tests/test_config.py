@@ -17,7 +17,7 @@ def test_write_example_and_load_config(tmp_path: Path) -> None:
     assert loaded.text.dictionary_path is None
     assert loaded.text.llm_correction.mode.value == "never"
     assert loaded.text.llm_correction.provider.value == "ollama"
-    assert loaded.text.llm_correction.timeout_seconds == 2.5
+    assert loaded.text.llm_correction.timeout_seconds == 5.0
     assert loaded.text.llm_correction.max_input_chars == 500
     assert loaded.text.llm_correction.enabled_tools is False
 

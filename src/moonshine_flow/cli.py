@@ -60,6 +60,9 @@ from moonshine_flow.text_processing.repository import (
 from moonshine_flow.text_processing.service import CorrectionService
 
 LOGGER = logging.getLogger(__name__)
+_ANSI_YELLOW = "\x1b[33m"
+_ANSI_GREEN = "\x1b[32m"
+_ANSI_RESET = "\x1b[0m"
 
 
 def _resolve_app_version() -> str:
@@ -158,7 +161,7 @@ def _build_llm_settings_from_config(llm_cfg: object) -> LLMCorrectionSettings | 
         provider=provider,
         base_url=base_url,
         model=model,
-        timeout_seconds=float(getattr(llm_cfg, "timeout_seconds", 2.5)),
+        timeout_seconds=float(getattr(llm_cfg, "timeout_seconds", 5.0)),
         max_input_chars=int(getattr(llm_cfg, "max_input_chars", 500)),
         api_key=_normalize_optional_secret(getattr(llm_cfg, "api_key", None)),
         enabled_tools=bool(getattr(llm_cfg, "enabled_tools", False)),
@@ -166,8 +169,16 @@ def _build_llm_settings_from_config(llm_cfg: object) -> LLMCorrectionSettings | 
 
 
 def _supports_ansi_styles() -> bool:
-    stdout_isatty = getattr(sys.stdout, "isatty", None)
-    if not callable(stdout_isatty) or not stdout_isatty():
+    return _supports_ansi_for_stream(sys.stdout)
+
+
+def _supports_ansi_styles_stderr() -> bool:
+    return _supports_ansi_for_stream(sys.stderr)
+
+
+def _supports_ansi_for_stream(stream: object) -> bool:
+    isatty = getattr(stream, "isatty", None)
+    if not callable(isatty) or not isatty():
         return False
     if os.environ.get("NO_COLOR") is not None:
         return False
@@ -181,6 +192,26 @@ def _dim(text: str) -> str:
     if not _supports_ansi_styles():
         return text
     return f"\x1b[2m{text}\x1b[0m"
+
+
+def _yellow(text: str, *, stderr: bool = False) -> str:
+    if stderr:
+        if not _supports_ansi_styles_stderr():
+            return text
+    else:
+        if not _supports_ansi_styles():
+            return text
+    return f"{_ANSI_YELLOW}{text}{_ANSI_RESET}"
+
+
+def _green(text: str, *, stderr: bool = False) -> str:
+    if stderr:
+        if not _supports_ansi_styles_stderr():
+            return text
+    else:
+        if not _supports_ansi_styles():
+            return text
+    return f"{_ANSI_GREEN}{text}{_ANSI_RESET}"
 
 
 def _display_value(value: object) -> str:
@@ -459,14 +490,31 @@ def _resolve_launchd_llm_enabled_override_for_command(
 
     ok, reason = preflight_func()
     if ok:
+        print(
+            _green(
+                "LLM preflight succeeded during install/restart; "
+                "launchd LLM override set to true."
+            )
+        )
         return True
     print(
-        "Warning: LLM preflight failed during install/restart; "
-        "launchd LLM override set to false.",
+        _yellow(
+            "Warning: LLM preflight failed during install/restart; "
+            "launchd LLM override set to false.",
+            stderr=True,
+        ),
+        file=sys.stderr,
+    )
+    print(
+        _yellow(
+            "Warning: You selected YES, but it was switched to NO "
+            "because the LLM endpoint was unreachable or invalid.",
+            stderr=True,
+        ),
         file=sys.stderr,
     )
     if reason:
-        print(f"Preflight detail: {reason}", file=sys.stderr)
+        print(_yellow(f"Preflight detail: {reason}", stderr=True), file=sys.stderr)
     return False
 
 
@@ -526,7 +574,11 @@ def _build_runtime_post_processor(
         LOGGER.warning("Unexpected LLM preflight failure: %s", exc)
 
     LOGGER.info(
-        "LLM correction enabled: provider=%s base_url=%s model=%s timeout=%.2fs max_input_chars=%d",
+        _green(
+            "LLM correction enabled: provider=%s base_url=%s model=%s "
+            "timeout=%.2fs max_input_chars=%d",
+            stderr=True,
+        ),
         settings.provider,
         settings.base_url,
         settings.model,
@@ -732,8 +784,11 @@ def cmd_run(args: argparse.Namespace) -> int:
         LOGGER.warning(warning.message)
     if correction_result.loaded:
         LOGGER.info(
-            "Transcription correction dictionary loaded: "
-            "path=%s exact=%d regex=%d disabled_regex=%d",
+            _green(
+                "Transcription correction dictionary loaded: "
+                "path=%s exact=%d regex=%d disabled_regex=%d",
+                stderr=True,
+            ),
             correction_result.path,
             correction_result.rules.exact_count,
             correction_result.rules.regex_count,
@@ -769,7 +824,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     daemon = MoonshineFlowDaemon(config, post_processor=post_processor)
     try:
         backend = daemon.transcriber.preflight_model()
-        LOGGER.info("Model preflight OK (%s)", backend)
+        LOGGER.info(_green("Model preflight OK (%s)", stderr=True), backend)
     except Exception as exc:
         LOGGER.error("Model preflight failed: %s", exc)
         if "incompatible architecture" in str(exc).lower():
@@ -796,7 +851,7 @@ def cmd_check_permissions(args: argparse.Namespace) -> int:
     print("Input Monitoring:", "OK" if report.input_monitoring else "MISSING")
 
     if report.all_granted:
-        print("\nAll required permissions are granted.")
+        print(_green("\nAll required permissions are granted."))
         return 0
 
     print("\n" + format_permission_guidance(report))
@@ -820,19 +875,24 @@ def cmd_install_launch_agent(args: argparse.Namespace) -> int:
     if getattr(args, "install_app_bundle", True):
         bundle_path = install_app_bundle_from_env()
         if bundle_path is not None:
-            print(f"Installed app bundle: {bundle_path}")
+            print(_green(f"Installed app bundle: {bundle_path}"))
             tcc_reset_ok = reset_app_bundle_tcc(APP_BUNDLE_IDENTIFIER)
             if tcc_reset_ok:
                 print(
-                    "TCC permissions reset for MoonshineFlow.app. "
-                    "Re-grant Accessibility and Input Monitoring in "
-                    "System Settings -> Privacy & Security."
+                    _green(
+                        "TCC permissions reset for MoonshineFlow.app. "
+                        "Re-grant Accessibility and Input Monitoring in "
+                        "System Settings -> Privacy & Security."
+                    )
                 )
             else:
                 print(
-                    "Warning: could not reset TCC permissions automatically. "
-                    "If Accessibility or Input Monitoring appear stale, "
-                    "remove and re-add MoonshineFlow manually in System Settings.",
+                    _yellow(
+                        "Warning: could not reset TCC permissions automatically. "
+                        "If Accessibility or Input Monitoring appear stale, "
+                        "remove and re-add MoonshineFlow manually in System Settings.",
+                        stderr=True,
+                    ),
                     file=sys.stderr,
                 )
 
@@ -867,8 +927,11 @@ def cmd_install_launch_agent(args: argparse.Namespace) -> int:
             return 2
 
         print(
-            "Warning: continuing with unverified permissions because "
-            "`--allow-missing-permissions` was specified.",
+            _yellow(
+                "Warning: continuing with unverified permissions because "
+                "`--allow-missing-permissions` was specified.",
+                stderr=True,
+            ),
             file=sys.stderr,
         )
     elif not probe.report.all_granted:
@@ -891,8 +954,11 @@ def cmd_install_launch_agent(args: argparse.Namespace) -> int:
             return 2
 
         print(
-            "Warning: continuing with missing permissions because "
-            "`--allow-missing-permissions` was specified.",
+            _yellow(
+                "Warning: continuing with missing permissions because "
+                "`--allow-missing-permissions` was specified.",
+                stderr=True,
+            ),
             file=sys.stderr,
         )
         print(guidance, file=sys.stderr)
@@ -904,8 +970,12 @@ def cmd_install_launch_agent(args: argparse.Namespace) -> int:
             config_path,
             llm_enabled_override=desired_launchd_llm_override,
         )
-    print(f"Installed launch agent: {plist_path}")
-    print(f"Launchd LLM enabled override: {_format_optional_bool(desired_launchd_llm_override)}")
+    print(_green(f"Installed launch agent: {plist_path}"))
+    launchd_override_text = _format_optional_bool(desired_launchd_llm_override)
+    if desired_launchd_llm_override is True:
+        print(_green(f"Launchd LLM enabled override: {launchd_override_text}"))
+    else:
+        print(f"Launchd LLM enabled override: {launchd_override_text}")
     return 0
 
 
@@ -913,7 +983,7 @@ def cmd_uninstall_launch_agent(args: argparse.Namespace) -> int:
     del args
     removed = uninstall_launch_agent()
     if removed:
-        print(f"Removed launch agent: {launch_agent_path()}")
+        print(_green(f"Removed launch agent: {launch_agent_path()}"))
     else:
         print("Launch agent is not installed.")
     return 0
@@ -948,8 +1018,12 @@ def cmd_restart_launch_agent(args: argparse.Namespace) -> int:
     if not restarted:
         print("Launch agent is not installed.")
         return 2
-    print(f"Restarted launch agent: {launch_agent_path()}")
-    print(f"Launchd LLM enabled override: {_format_optional_bool(desired_launchd_llm_override)}")
+    print(_green(f"Restarted launch agent: {launch_agent_path()}"))
+    launchd_override_text = _format_optional_bool(desired_launchd_llm_override)
+    if desired_launchd_llm_override is True:
+        print(_green(f"Launchd LLM enabled override: {launchd_override_text}"))
+    else:
+        print(f"Launchd LLM enabled override: {launchd_override_text}")
     return 0
 
 
@@ -963,7 +1037,7 @@ def cmd_install_app_bundle(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
-    print(f"Installed app bundle: {installed}")
+    print(_green(f"Installed app bundle: {installed}"))
     return 0
 
 
@@ -1110,12 +1184,14 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                 f"disabled_regex={correction_result.disabled_regex_count})"
             )
             for warning in correction_result.warnings:
-                print(f"Correction dictionary warning: {warning.message}")
+                print(_yellow(f"Correction dictionary warning: {warning.message}"))
         else:
             print(
-                "Correction dictionary: OK "
-                f"(exact={correction_result.rules.exact_count}, "
-                f"regex={correction_result.rules.regex_count})"
+                _green(
+                    "Correction dictionary: OK "
+                    f"(exact={correction_result.rules.exact_count}, "
+                    f"regex={correction_result.rules.regex_count})"
+                )
             )
     llm_cfg = getattr(getattr(config, "text", None), "llm_correction", None)
     if llm_cfg is None:
@@ -1125,7 +1201,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         provider = str(getattr(llm_cfg, "provider", "ollama"))
         base_url = str(getattr(llm_cfg, "base_url", ""))
         model = str(getattr(llm_cfg, "model", ""))
-        timeout_seconds = float(getattr(llm_cfg, "timeout_seconds", 2.5))
+        timeout_seconds = float(getattr(llm_cfg, "timeout_seconds", 5.0))
         max_input_chars = int(getattr(llm_cfg, "max_input_chars", 500))
         enabled_tools = bool(getattr(llm_cfg, "enabled_tools", False))
         api_key = _normalize_optional_secret(getattr(llm_cfg, "api_key", None))
@@ -1153,7 +1229,11 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         else:
             print("LaunchAgent program: UNKNOWN")
         launchd_llm_override = _launchd_llm_enabled_override_from_payload(launchd_payload)
-        print(f"Launchd LLM enabled override: {_format_optional_bool(launchd_llm_override)}")
+        launchd_llm_override_text = _format_optional_bool(launchd_llm_override)
+        if launchd_llm_override is True:
+            print(_green(f"Launchd LLM enabled override: {launchd_llm_override_text}"))
+        else:
+            print(f"Launchd LLM enabled override: {launchd_llm_override_text}")
         launchd_permission_target = _derive_launchd_permission_target(launchd_payload)
         if launchd_permission_target:
             print(f"Launchd permission target (recommended): {launchd_permission_target}")
@@ -1165,7 +1245,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     if runtime_warning_result is not None:
         runtime_warning, runtime_warning_timestamp = runtime_warning_result
         timestamp_suffix = f" at {runtime_warning_timestamp}" if runtime_warning_timestamp else ""
-        print(f"Launchd runtime status: WARNING ({runtime_warning}{timestamp_suffix})")
+        print(_yellow(f"Launchd runtime status: WARNING ({runtime_warning}{timestamp_suffix})"))
 
     for pkg in ("moonshine_voice", "sounddevice", "pynput"):
         print(f"Package {pkg}:", "FOUND" if find_spec(pkg) else "MISSING")
@@ -1181,7 +1261,11 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     print("Transcriber:", transcriber.backend_summary())
 
     report = check_all_permissions()
-    print("Terminal permissions:", "OK" if report.all_granted else "INCOMPLETE")
+    terminal_status = "OK" if report.all_granted else "INCOMPLETE"
+    if report.all_granted:
+        print(_green(f"Terminal permissions: {terminal_status}"))
+    else:
+        print(f"Terminal permissions: {terminal_status}")
 
     launchd_report = None
     probe_error = False
@@ -1200,7 +1284,11 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
         if probe.report is not None:
             launchd_report = probe.report
-            print("Launchd permissions:", "OK" if launchd_report.all_granted else "INCOMPLETE")
+            launchd_status = "OK" if launchd_report.all_granted else "INCOMPLETE"
+            if launchd_report.all_granted:
+                print(_green(f"Launchd permissions: {launchd_status}"))
+            else:
+                print(f"Launchd permissions: {launchd_status}")
             if not launchd_report.all_granted:
                 print(f"Launchd missing permissions: {', '.join(launchd_report.missing)}")
             if set(launchd_report.missing) != set(report.missing):
@@ -1248,9 +1336,9 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     if effective_incomplete:
         print("Permissions: INCOMPLETE")
     elif effective_warn:
-        print("Permissions: WARN (launchd check OK but runtime not trusted)")
+        print(_yellow("Permissions: WARN (launchd check OK but runtime not trusted)"))
     else:
-        print("Permissions: OK")
+        print(_green("Permissions: OK"))
 
     if not report.all_granted:
         print(format_permission_guidance(report))
@@ -1285,9 +1373,11 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
     if platform.system() == "Darwin" and os_machine == "arm64" and py_machine != "arm64":
         print(
-            "\nWarning: Apple Silicon macOS is running an x86_64 Python environment "
-            "(likely Rosetta). Moonshine packages may be unavailable. "
-            "Use an arm64 Python interpreter."
+            _yellow(
+                "\nWarning: Apple Silicon macOS is running an x86_64 Python environment "
+                "(likely Rosetta). Moonshine packages may be unavailable. "
+                "Use an arm64 Python interpreter."
+            )
         )
     return 0
 

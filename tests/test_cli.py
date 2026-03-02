@@ -822,6 +822,8 @@ def test_cmd_install_launch_agent_interactive_yes_preflight_failure_sets_false(
     assert exit_code == 0
     assert called["kwargs"] == {"llm_enabled_override": False}
     assert "preflight failed" in captured.err.lower()
+    assert "selected yes" in captured.err.lower()
+    assert "switched to no" in captured.err.lower()
     assert "Launchd LLM enabled override: false" in captured.out
 
 
@@ -853,6 +855,8 @@ def test_cmd_restart_launch_agent_interactive_yes_preflight_failure_sets_false(
     assert exit_code == 0
     assert called["kwargs"] == {"llm_enabled_override": False}
     assert "preflight failed" in captured.err.lower()
+    assert "selected yes" in captured.err.lower()
+    assert "switched to no" in captured.err.lower()
     assert "Launchd LLM enabled override: false" in captured.out
 
 
