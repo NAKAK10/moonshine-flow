@@ -12,6 +12,8 @@ def test_write_example_and_load_config(tmp_path: Path) -> None:
     assert loaded.hotkey.key == "right_cmd"
     assert loaded.model.size.value in {"base", "tiny"}
     assert loaded.audio.input_device_policy.value == "playback_friendly"
+    assert loaded.audio.release_tail_seconds == 0.25
+    assert loaded.audio.trailing_silence_seconds == 0.5
     assert loaded.text.dictionary_path is None
 
 
@@ -89,3 +91,75 @@ notify_on_error = true
 
     loaded = load_config(cfg_path)
     assert loaded.audio.input_device_policy.value == "playback_friendly"
+
+
+def test_load_config_clamps_audio_tail_durations_over_limit(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        """
+[hotkey]
+key = "right_cmd"
+
+[audio]
+sample_rate = 16000
+channels = 1
+dtype = "float32"
+max_record_seconds = 30
+release_tail_seconds = 2.5
+trailing_silence_seconds = 3.0
+
+[model]
+size = "base"
+language = "ja"
+device = "mps"
+
+[output]
+mode = "clipboard_paste"
+paste_shortcut = "cmd+v"
+
+[runtime]
+log_level = "INFO"
+notify_on_error = true
+""".strip(),
+        encoding="utf-8",
+    )
+
+    loaded = load_config(cfg_path)
+    assert loaded.audio.release_tail_seconds == 1.0
+    assert loaded.audio.trailing_silence_seconds == 1.0
+
+
+def test_load_config_clamps_audio_tail_durations_under_zero(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        """
+[hotkey]
+key = "right_cmd"
+
+[audio]
+sample_rate = 16000
+channels = 1
+dtype = "float32"
+max_record_seconds = 30
+release_tail_seconds = -0.5
+trailing_silence_seconds = -2.0
+
+[model]
+size = "base"
+language = "ja"
+device = "mps"
+
+[output]
+mode = "clipboard_paste"
+paste_shortcut = "cmd+v"
+
+[runtime]
+log_level = "INFO"
+notify_on_error = true
+""".strip(),
+        encoding="utf-8",
+    )
+
+    loaded = load_config(cfg_path)
+    assert loaded.audio.release_tail_seconds == 0.0
+    assert loaded.audio.trailing_silence_seconds == 0.0

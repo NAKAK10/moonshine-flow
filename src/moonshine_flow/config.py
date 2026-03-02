@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import shutil
 import tomllib
 from enum import Enum, StrEnum
@@ -9,6 +10,8 @@ from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
+
+LOGGER = logging.getLogger(__name__)
 
 
 class ModelSize(StrEnum):
@@ -45,6 +48,8 @@ class AudioConfig(BaseModel):
     channels: int = 1
     dtype: str = "float32"
     max_record_seconds: int = 30
+    release_tail_seconds: float = 0.25
+    trailing_silence_seconds: float = 0.5
     input_device: str | int | None = None
     input_device_policy: InputDevicePolicy = InputDevicePolicy.PLAYBACK_FRIENDLY
 
@@ -93,6 +98,16 @@ def default_config_path() -> Path:
     return Path("~/.config/moonshine-flow/config.toml").expanduser()
 
 
+def _clamp_audio_seconds(value: float, *, field_name: str) -> float:
+    if value < 0.0:
+        LOGGER.warning("audio.%s=%s is below 0.0; using 0.0", field_name, value)
+        return 0.0
+    if value > 1.0:
+        LOGGER.warning("audio.%s=%s exceeds 1.0; using 1.0", field_name, value)
+        return 1.0
+    return value
+
+
 def _dump_toml(data: dict[str, Any]) -> str:
     """Serialize TOML without requiring optional dependencies."""
     try:
@@ -122,6 +137,8 @@ def _dump_toml(data: dict[str, Any]) -> str:
             f"channels = {data['audio']['channels']}\n"
             f"dtype = \"{data['audio']['dtype']}\"\n"
             f"max_record_seconds = {data['audio']['max_record_seconds']}\n"
+            f"release_tail_seconds = {data['audio']['release_tail_seconds']}\n"
+            f"trailing_silence_seconds = {data['audio']['trailing_silence_seconds']}\n"
             f"{input_device_line}\n"
             f"input_device_policy = \"{data['audio']['input_device_policy']}\"\n\n"
             "[model]\n"
@@ -181,5 +198,16 @@ def load_config(path: Path | None = None) -> AppConfig:
     ensure_config_exists(config_path)
     raw = tomllib.loads(config_path.read_text(encoding="utf-8"))
     if hasattr(AppConfig, "model_validate"):
-        return AppConfig.model_validate(raw)
-    return AppConfig.parse_obj(raw)
+        config = AppConfig.model_validate(raw)
+    else:
+        config = AppConfig.parse_obj(raw)
+
+    config.audio.release_tail_seconds = _clamp_audio_seconds(
+        float(config.audio.release_tail_seconds),
+        field_name="release_tail_seconds",
+    )
+    config.audio.trailing_silence_seconds = _clamp_audio_seconds(
+        float(config.audio.trailing_silence_seconds),
+        field_name="trailing_silence_seconds",
+    )
+    return config

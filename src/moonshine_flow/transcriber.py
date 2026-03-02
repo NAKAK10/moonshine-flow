@@ -12,7 +12,7 @@ from moonshine_flow.text_processing.interfaces import NoopTextPostProcessor, Tex
 from moonshine_flow.text_processing.normalizer import normalize_transcript_text
 
 LOGGER = logging.getLogger(__name__)
-_TRAILING_SILENCE_SECONDS = 0.5
+
 
 @dataclass(slots=True)
 class DeviceResolution:
@@ -30,11 +30,13 @@ class MoonshineTranscriber:
         model_size: str,
         language: str,
         device: str,
+        trailing_silence_seconds: float = 0.5,
         post_processor: TextPostProcessor | None = None,
     ) -> None:
         self.model_size = model_size.strip().lower()
         self.language = language.strip().lower()
         self.device_resolution = self._resolve_device(device)
+        self.trailing_silence_seconds = max(0.0, min(1.0, float(trailing_silence_seconds)))
 
         self._backend = "moonshine-voice"
         self._resolved_language = self._resolve_language(self.language)
@@ -136,7 +138,7 @@ class MoonshineTranscriber:
         assert self._transcriber is not None
 
         normalized = self._normalize_audio(audio)
-        trailing_silence_samples = int(sample_rate * _TRAILING_SILENCE_SECONDS)
+        trailing_silence_samples = int(sample_rate * self.trailing_silence_seconds)
         if trailing_silence_samples > 0:
             normalized = np.concatenate(
                 (normalized, np.zeros(trailing_silence_samples, dtype=np.float32))

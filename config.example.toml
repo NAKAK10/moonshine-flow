@@ -6,6 +6,12 @@ sample_rate = 16000
 channels = 1
 dtype = "float32"
 max_record_seconds = 30
+# Keep recording this many seconds after key release to avoid clipping the utterance tail.
+# Value is clamped to [0.0, 1.0].
+release_tail_seconds = 0.25
+# Add trailing silence before transcription for decoder stability.
+# Value is clamped to [0.0, 1.0].
+trailing_silence_seconds = 0.5
 # If set, this exact input device is used first (name or index).
 # input_device = "MacBook Air Microphone"
 # Used only when input_device is not set. If omitted, behaves as playback_friendly.

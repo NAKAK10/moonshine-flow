@@ -36,6 +36,9 @@ class MoonshineFlowDaemon:
         self._transcription_in_progress = False
         self._last_release_at_monotonic = 0.0
         self._recording_stale_since_monotonic: float | None = None
+        self._pending_stop_timer: threading.Timer | None = None
+        self._pending_stop_id: int | None = None
+        self._next_stop_id = 0
 
         self.recorder = AudioRecorder(
             sample_rate=config.audio.sample_rate,
@@ -49,6 +52,7 @@ class MoonshineFlowDaemon:
             model_size=config.model.size.value,
             language=config.model.language,
             device=config.model.device,
+            trailing_silence_seconds=config.audio.trailing_silence_seconds,
             post_processor=post_processor,
         )
         self.injector = OutputInjector(
@@ -72,14 +76,17 @@ class MoonshineFlowDaemon:
         if self._stop_event.is_set():
             return
         with self._state_lock:
+            canceled = self._cancel_pending_stop_locked()
+            if canceled:
+                LOGGER.debug("Canceled delayed stop because hotkey was pressed again")
             if self._transcription_in_progress:
                 LOGGER.info("Ignored hotkey press while transcription is in progress")
                 return
             cooldown_until = self._last_release_at_monotonic + _HOTKEY_COOLDOWN_SECONDS
+        if self.recorder.is_recording:
+            return
         if time.monotonic() < cooldown_until:
             LOGGER.debug("Ignored hotkey press during cooldown window")
-            return
-        if self.recorder.is_recording:
             return
 
         try:
@@ -92,10 +99,56 @@ class MoonshineFlowDaemon:
         if self._stop_event.is_set() or not self.recorder.is_recording:
             return
 
+        release_tail_seconds = float(self.config.audio.release_tail_seconds)
+        if release_tail_seconds <= 0.0:
+            self._stop_recording_and_queue_audio(reason="hotkey-release")
+            return
+
+        with self._state_lock:
+            self._cancel_pending_stop_locked()
+            self._next_stop_id += 1
+            stop_id = self._next_stop_id
+            timer = threading.Timer(
+                release_tail_seconds,
+                self._on_delayed_stop_timer,
+                args=(stop_id,),
+            )
+            timer.daemon = True
+            self._pending_stop_id = stop_id
+            self._pending_stop_timer = timer
+
+        LOGGER.debug(
+            "Scheduled delayed stop %.3fs after release (stop_id=%s)",
+            release_tail_seconds,
+            stop_id,
+        )
+        timer.start()
+
+    def _cancel_pending_stop_locked(self) -> bool:
+        timer = self._pending_stop_timer
+        self._pending_stop_timer = None
+        self._pending_stop_id = None
+        if timer is None:
+            return False
+        timer.cancel()
+        return True
+
+    def _on_delayed_stop_timer(self, stop_id: int) -> None:
+        with self._state_lock:
+            if self._pending_stop_id != stop_id:
+                return
+            self._pending_stop_id = None
+            self._pending_stop_timer = None
+        self._stop_recording_and_queue_audio(reason="delayed-hotkey-release")
+
+    def _stop_recording_and_queue_audio(self, *, reason: str) -> None:
+        if self._stop_event.is_set() or not self.recorder.is_recording:
+            return
+
         try:
             audio = self.recorder.stop()
         except Exception:
-            LOGGER.exception("Failed to stop recording")
+            LOGGER.exception("Failed to stop recording (%s)", reason)
             return
         finally:
             with self._state_lock:
@@ -103,11 +156,11 @@ class MoonshineFlowDaemon:
                 self._recording_stale_since_monotonic = None
 
         if audio.size == 0:
-            LOGGER.info("Skipped empty audio capture")
+            LOGGER.info("Skipped empty audio capture (%s)", reason)
             return
 
         self._audio_queue.put(audio)
-        LOGGER.info("Queued audio for transcription")
+        LOGGER.info("Queued audio for transcription (%s)", reason)
 
     def _worker_loop(self) -> None:
         while not self._stop_event.is_set():
@@ -156,6 +209,8 @@ class MoonshineFlowDaemon:
 
         LOGGER.warning("Recovering recorder after %.2fs inactive stream while recording", stale_for)
         try:
+            with self._state_lock:
+                self._cancel_pending_stop_locked()
             self.recorder.close()
         except Exception:
             LOGGER.exception("Failed to recover recorder from stale recording state")
@@ -183,6 +238,8 @@ class MoonshineFlowDaemon:
             return
 
         self._stop_event.set()
+        with self._state_lock:
+            self._cancel_pending_stop_locked()
         try:
             self.hotkey.stop()
         except Exception:

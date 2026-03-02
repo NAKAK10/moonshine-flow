@@ -93,12 +93,45 @@ class _FakeHotkeyMonitor:
         return None
 
 
-def _build_daemon(monkeypatch) -> daemon_module.MoonshineFlowDaemon:
+class _FakeTimer:
+    instances: list[_FakeTimer] = []
+
+    def __init__(self, interval, function, args=None, kwargs=None):
+        self.interval = interval
+        self.function = function
+        self.args = tuple(args or ())
+        self.kwargs = dict(kwargs or {})
+        self.daemon = False
+        self.started = False
+        self.canceled = False
+        _FakeTimer.instances.append(self)
+
+    def start(self) -> None:
+        self.started = True
+
+    def cancel(self) -> None:
+        self.canceled = True
+
+    def fire(self) -> None:
+        if self.canceled:
+            return
+        self.function(*self.args, **self.kwargs)
+
+
+def _reset_fake_timer() -> None:
+    _FakeTimer.instances = []
+
+
+def _build_daemon(
+    monkeypatch,
+    *,
+    config: AppConfig | None = None,
+) -> daemon_module.MoonshineFlowDaemon:
     monkeypatch.setattr(daemon_module, "AudioRecorder", _FakeRecorder)
     monkeypatch.setattr(daemon_module, "MoonshineTranscriber", _FakeTranscriber)
     monkeypatch.setattr(daemon_module, "OutputInjector", _FakeInjector)
     monkeypatch.setattr(daemon_module, "HotkeyMonitor", _FakeHotkeyMonitor)
-    return daemon_module.MoonshineFlowDaemon(AppConfig())
+    return daemon_module.MoonshineFlowDaemon(config or AppConfig())
 
 
 def test_hotkey_down_ignored_while_transcription_busy(monkeypatch) -> None:
@@ -112,7 +145,9 @@ def test_hotkey_down_ignored_while_transcription_busy(monkeypatch) -> None:
 
 
 def test_hotkey_down_respects_cooldown(monkeypatch) -> None:
-    daemon = _build_daemon(monkeypatch)
+    config = AppConfig()
+    config.audio.release_tail_seconds = 0.0
+    daemon = _build_daemon(monkeypatch, config=config)
     monotonic_values = iter([10.0, 10.1, 10.4])
     monkeypatch.setattr(daemon_module.time, "monotonic", lambda: next(monotonic_values))
 
@@ -125,6 +160,57 @@ def test_hotkey_down_respects_cooldown(monkeypatch) -> None:
 
     daemon._on_hotkey_down()
     assert daemon.recorder.start_calls == 1
+
+
+def test_hotkey_up_schedules_delayed_stop(monkeypatch) -> None:
+    _reset_fake_timer()
+    monkeypatch.setattr(daemon_module.threading, "Timer", _FakeTimer)
+    daemon = _build_daemon(monkeypatch)
+    daemon.recorder.is_recording = True
+
+    daemon._on_hotkey_up()
+
+    assert len(_FakeTimer.instances) == 1
+    timer = _FakeTimer.instances[0]
+    assert timer.started is True
+    assert timer.interval == 0.25
+    assert daemon.recorder.stop_calls == 0
+
+    timer.fire()
+
+    assert daemon.recorder.stop_calls == 1
+    assert daemon._audio_queue.qsize() == 1
+
+
+def test_hotkey_down_cancels_pending_delayed_stop(monkeypatch) -> None:
+    _reset_fake_timer()
+    monkeypatch.setattr(daemon_module.threading, "Timer", _FakeTimer)
+    daemon = _build_daemon(monkeypatch)
+    daemon.recorder.is_recording = True
+
+    daemon._on_hotkey_up()
+    assert len(_FakeTimer.instances) == 1
+    timer = _FakeTimer.instances[0]
+
+    daemon._on_hotkey_down()
+
+    assert timer.canceled is True
+    assert daemon.recorder.stop_calls == 0
+
+
+def test_stop_cancels_pending_delayed_stop(monkeypatch) -> None:
+    _reset_fake_timer()
+    monkeypatch.setattr(daemon_module.threading, "Timer", _FakeTimer)
+    daemon = _build_daemon(monkeypatch)
+    daemon.recorder.is_recording = True
+
+    daemon._on_hotkey_up()
+    timer = _FakeTimer.instances[0]
+
+    daemon.stop()
+
+    assert timer.canceled is True
+    assert daemon.recorder.close_calls == 1
 
 
 def test_recover_stale_recording_closes_recorder(monkeypatch) -> None:
