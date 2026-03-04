@@ -1,0 +1,1 @@
+"""Port protocols for adapters."""

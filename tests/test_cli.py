@@ -296,6 +296,7 @@ def test_cmd_init_updates_values_and_keeps_others(monkeypatch, tmp_path: Path, c
             "",  # audio.release_tail_seconds
             "",  # audio.trailing_silence_seconds
             "",  # audio.input_device
+            "",  # audio.input_device_policy
             "",  # stt.model
             "ja",  # language
             "",  # model.device
@@ -344,6 +345,7 @@ def test_cmd_init_accepts_provider_other(monkeypatch, tmp_path: Path, capsys) ->
             "",  # audio.release_tail_seconds
             "",  # audio.trailing_silence_seconds
             "",  # audio.input_device
+            "",  # audio.input_device_policy
             "",  # stt.model
             "",  # language
             "",  # model.device

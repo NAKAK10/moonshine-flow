@@ -26,6 +26,11 @@ trailing_silence_seconds = 1.0
 # If set, this exact input device is used first (name or index).
 # Use `mflow list devices` to view and choose from available input devices.
 # input_device = "MacBook Air Microphone"
+# How to pick input when audio.input_device is unset:
+#   playback_friendly: avoid Bluetooth/HFP mic when possible (recommended for music playback)
+#   system_default: always use macOS default input device
+#   external_preferred: prefer non-default external input when available
+input_device_policy = "playback_friendly"
 
 [model]
 device = "mps"

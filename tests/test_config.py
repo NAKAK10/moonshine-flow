@@ -16,6 +16,7 @@ def test_write_example_and_load_config(tmp_path: Path) -> None:
     assert loaded.stt.model == "moonshine:base"
     assert loaded.audio.release_tail_seconds == 0.25
     assert loaded.audio.trailing_silence_seconds == 1.0
+    assert loaded.audio.input_device_policy.value == "playback_friendly"
     assert loaded.output.mode.value == "direct_typing"
     assert loaded.text.dictionary_path is None
     assert loaded.text.llm_correction.mode.value == "never"
@@ -32,11 +33,12 @@ def test_load_config_creates_missing_file(tmp_path: Path) -> None:
     assert cfg_path.exists()
     assert loaded.audio.sample_rate == 16000
     assert loaded.audio.trailing_silence_seconds == 1.0
+    assert loaded.audio.input_device_policy.value == "playback_friendly"
     assert loaded.language == "en"
     assert loaded.output.mode.value == "direct_typing"
 
 
-def test_load_config_ignores_legacy_input_device_policy(tmp_path: Path) -> None:
+def test_load_config_accepts_input_device_policy(tmp_path: Path) -> None:
     cfg_path = tmp_path / "config.toml"
     cfg_path.write_text(
         """
@@ -72,6 +74,7 @@ notify_on_error = true
 
     loaded = load_config(cfg_path)
     assert loaded.audio.input_device == 3
+    assert loaded.audio.input_device_policy.value == "external_preferred"
 
 
 def test_load_config_clamps_audio_tail_durations_over_limit(tmp_path: Path) -> None:

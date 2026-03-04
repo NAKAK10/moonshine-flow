@@ -10,10 +10,12 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from moonshine_flow.domain.transcription_session import append_only_delta, has_sufficient_new_audio
 from moonshine_flow.audio_recorder import AudioRecorder
 from moonshine_flow.config import AppConfig
 from moonshine_flow.hotkey_monitor import HotkeyMonitor
 from moonshine_flow.output_injector import OutputInjector
+from moonshine_flow.ports.runtime import AudioInputPort, SpeechToTextPort, TextOutputPort
 from moonshine_flow.stt.factory import create_stt_backend, parse_stt_model
 from moonshine_flow.text_processing.interfaces import TextPostProcessor
 
@@ -24,7 +26,6 @@ _LIVE_INPUT_MIN_NEW_AUDIO_SECONDS = 0.1
 _HOTKEY_RELEASE_RECONCILE_SECONDS = 0.25
 _MAIN_LOOP_IDLE_SLEEP_SECONDS = 0.2
 _MAIN_LOOP_ACTIVE_SLEEP_SECONDS = 0.05
-_NON_MONOTONIC_TAIL_TOLERANCE_CHARS = 4
 
 
 @dataclass(slots=True)
@@ -59,14 +60,15 @@ class MoonshineFlowDaemon:
         self._live_last_snapshot_samples = 0
         self._hotkey_not_pressed_since_monotonic: float | None = None
 
-        self.recorder = AudioRecorder(
+        self.recorder: AudioInputPort = AudioRecorder(
             sample_rate=config.audio.sample_rate,
             channels=config.audio.channels,
             dtype=config.audio.dtype,
             max_record_seconds=config.audio.max_record_seconds,
             input_device=config.audio.input_device,
+            input_device_policy=str(config.audio.input_device_policy),
         )
-        self.transcriber = create_stt_backend(
+        self.transcriber: SpeechToTextPort = create_stt_backend(
             config,
             post_processor=post_processor,
         )
@@ -74,7 +76,7 @@ class MoonshineFlowDaemon:
         self._supports_realtime_input = bool(
             callable(supports_realtime_input) and supports_realtime_input()
         )
-        self.injector = OutputInjector(
+        self.injector: TextOutputPort = OutputInjector(
             mode=config.output.mode.value,
             paste_shortcut=config.output.paste_shortcut,
         )
@@ -234,13 +236,11 @@ class MoonshineFlowDaemon:
             total_samples = int(audio.shape[0]) if audio.ndim else 0
             if total_samples <= 0:
                 return
-            min_new_audio_samples = max(
-                1,
-                int(float(self.config.audio.sample_rate) * _LIVE_INPUT_MIN_NEW_AUDIO_SECONDS),
-            )
-            if (
-                last_snapshot_samples > 0
-                and total_samples < last_snapshot_samples + min_new_audio_samples
+            if not has_sufficient_new_audio(
+                total_samples=total_samples,
+                last_snapshot_samples=last_snapshot_samples,
+                sample_rate=self.config.audio.sample_rate,
+                min_new_audio_seconds=_LIVE_INPUT_MIN_NEW_AUDIO_SECONDS,
             ):
                 return
 
@@ -298,22 +298,21 @@ class MoonshineFlowDaemon:
 
     @staticmethod
     def _append_only_delta(previous: str, current: str) -> str:
-        if not current.startswith(previous):
-            common_prefix_len = 0
-            max_common = min(len(previous), len(current))
-            while (
-                common_prefix_len < max_common
-                and previous[common_prefix_len] == current[common_prefix_len]
-            ):
-                common_prefix_len += 1
-            if len(previous) - common_prefix_len <= _NON_MONOTONIC_TAIL_TOLERANCE_CHARS:
-                if common_prefix_len >= len(current):
-                    return ""
-                LOGGER.debug("Applying tolerant delta for non-monotonic tail rewrite")
-                return current[common_prefix_len:]
-            LOGGER.debug("Skipping non-monotonic streaming update")
-            return ""
-        return current[len(previous) :]
+        delta = append_only_delta(previous, current)
+        if not delta and current != previous:
+            if not current.startswith(previous):
+                common_prefix_len = 0
+                max_common = min(len(previous), len(current))
+                while (
+                    common_prefix_len < max_common
+                    and previous[common_prefix_len] == current[common_prefix_len]
+                ):
+                    common_prefix_len += 1
+                if len(previous) - common_prefix_len <= 4:
+                    LOGGER.debug("Applying tolerant delta for non-monotonic tail rewrite")
+                else:
+                    LOGGER.debug("Skipping non-monotonic streaming update")
+        return delta
 
     def _recover_missed_hotkey_release_if_needed(self) -> None:
         if not self.recorder.is_recording:

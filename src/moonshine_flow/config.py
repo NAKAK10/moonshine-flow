@@ -36,6 +36,14 @@ class LLMCorrectionMode(StrEnum):
     ASK = "ask"
 
 
+class InputDevicePolicy(StrEnum):
+    """Input device selection policy when input_device is unset."""
+
+    PLAYBACK_FRIENDLY = "playback_friendly"
+    SYSTEM_DEFAULT = "system_default"
+    EXTERNAL_PREFERRED = "external_preferred"
+
+
 class HotkeyConfig(BaseModel):
     """Hotkey configuration."""
 
@@ -52,6 +60,7 @@ class AudioConfig(BaseModel):
     release_tail_seconds: float = 0.25
     trailing_silence_seconds: float = 1.0
     input_device: int | str | None = None
+    input_device_policy: InputDevicePolicy = InputDevicePolicy.PLAYBACK_FRIENDLY
 
 
 class ModelConfig(BaseModel):
@@ -208,6 +217,7 @@ def _dump_toml(data: dict[str, Any]) -> str:
             f"release_tail_seconds = {data['audio']['release_tail_seconds']}\n"
             f"trailing_silence_seconds = {data['audio']['trailing_silence_seconds']}\n"
             f"{input_device_line}\n"
+            f"input_device_policy = \"{data['audio']['input_device_policy']}\"\n"
             "\n"
             "[stt]\n"
             f"model = \"{data['stt']['model']}\"\n\n"

@@ -24,6 +24,9 @@ moonshine-flow run
 ```
 `mflow` is a shorthand alias, so `mflow doctor` / `mflow run` also work.
 
+If playback audio quality drops while recording (for example with Bluetooth headsets),
+set `audio.input_device_policy = "playback_friendly"` and keep `audio.input_device` unset.
+
 ## Command Reference
 ### Core Commands
 | Command | Description |

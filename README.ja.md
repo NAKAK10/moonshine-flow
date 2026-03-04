@@ -24,6 +24,9 @@ moonshine-flow run
 ```
 `mflow` は短縮エイリアスなので、`mflow doctor` / `mflow run` も同じように使えます。
 
+録音中に音楽再生の音質が落ちる場合（Bluetoothヘッドセット利用時など）は、
+`audio.input_device` を未設定のまま `audio.input_device_policy = "playback_friendly"` を使ってください。
+
 ## コマンド一覧
 ### 主要コマンド
 | コマンド | 説明 |

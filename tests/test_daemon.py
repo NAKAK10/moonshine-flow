@@ -10,6 +10,8 @@ from moonshine_flow.config import AppConfig
 
 
 class _FakeRecorder:
+    last_input_device_policy: str | None = None
+
     def __init__(
         self,
         sample_rate: int,
@@ -17,8 +19,10 @@ class _FakeRecorder:
         dtype: str,
         max_record_seconds: int,
         input_device: str | int | None = None,
+        input_device_policy: str = "playback_friendly",
     ) -> None:
         del sample_rate, channels, dtype, max_record_seconds, input_device
+        _FakeRecorder.last_input_device_policy = input_device_policy
         self.is_recording = False
         self.stream_active = True
         self.start_calls = 0
@@ -347,3 +351,11 @@ def test_recover_missed_hotkey_release_stops_recording(monkeypatch) -> None:
 def test_append_only_delta_tolerates_non_monotonic_tail() -> None:
     delta = daemon_module.MoonshineFlowDaemon._append_only_delta("hellp", "hello world")
     assert delta == "o world"
+
+
+def test_daemon_passes_audio_input_device_policy_to_recorder(monkeypatch) -> None:
+    config = AppConfig()
+    config.audio.input_device_policy = "external_preferred"
+    _build_daemon(monkeypatch, config=config)
+
+    assert _FakeRecorder.last_input_device_policy == "external_preferred"
