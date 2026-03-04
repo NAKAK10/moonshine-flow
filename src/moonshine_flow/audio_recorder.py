@@ -167,6 +167,13 @@ class AudioRecorder:
         LOGGER.debug("Audio recording stopped: %d samples", merged.shape[0])
         return merged
 
+    def snapshot(self) -> np.ndarray:
+        """Return currently buffered audio without stopping recording."""
+        with self._lock:
+            if not self._frames:
+                return np.empty((0, self.channels), dtype=self.dtype)
+            return np.concatenate(self._frames, axis=0).copy()
+
     def close(self) -> None:
         """Close active input stream and reset state."""
         with self._lock:

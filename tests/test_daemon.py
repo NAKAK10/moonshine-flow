@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import threading
+from types import SimpleNamespace
+
 import numpy as np
 
 import moonshine_flow.daemon as daemon_module
@@ -21,6 +24,8 @@ class _FakeRecorder:
         self.start_calls = 0
         self.stop_calls = 0
         self.close_calls = 0
+        self.snapshot_calls = 0
+        self.snapshot_audio = np.array([[0.1], [0.2]], dtype=np.float32)
 
     def start(self) -> None:
         self.start_calls += 1
@@ -41,6 +46,10 @@ class _FakeRecorder:
     def is_stream_active(self) -> bool:
         return self.stream_active
 
+    def snapshot(self) -> np.ndarray:
+        self.snapshot_calls += 1
+        return self.snapshot_audio.copy()
+
 
 class _FakeTranscriber:
     def __init__(self, **kwargs) -> None:
@@ -54,6 +63,9 @@ class _FakeTranscriber:
 
     def transcribe_stream(self, audio: np.ndarray, sample_rate: int):
         yield self.transcribe(audio, sample_rate)
+
+    def supports_realtime_input(self) -> bool:
+        return False
 
     def backend_summary(self) -> str:
         return "fake-backend"
@@ -84,6 +96,7 @@ class _FakeHotkeyMonitor:
         self.on_press = on_press
         self.on_release = on_release
         self.started = False
+        self.pressed = False
 
     def start(self) -> None:
         self.started = True
@@ -93,6 +106,9 @@ class _FakeHotkeyMonitor:
 
     def join(self) -> None:
         return None
+
+    def is_pressed(self) -> bool:
+        return self.pressed
 
 
 class _FakeTimer:
@@ -254,3 +270,80 @@ def test_recover_stale_recording_closes_recorder(monkeypatch) -> None:
     daemon._recover_stale_recording_if_needed()
     assert daemon.recorder.close_calls == 1
     assert daemon.recorder.is_recording is False
+
+
+def test_live_input_tick_injects_delta_for_realtime_backend(monkeypatch) -> None:
+    config = AppConfig()
+    config.audio.sample_rate = 10
+    daemon = _build_daemon(monkeypatch, config=config)
+    daemon._supports_realtime_input = True
+    daemon.recorder.is_recording = True
+    daemon.recorder.snapshot_audio = np.arange(4, dtype=np.float32).reshape(-1, 1)
+
+    daemon.transcriber.transcribe_stream = lambda *_args, **_kwargs: iter(["he"])
+
+    daemon._process_live_input_tick()
+
+    assert daemon.recorder.snapshot_calls == 1
+    assert daemon.injector.injected == ["he"]
+    assert daemon._live_emitted_text == "he"
+    assert daemon._live_last_snapshot_samples == 4
+
+
+def test_stop_recording_queues_emitted_prefix_in_live_input_mode(monkeypatch) -> None:
+    config = AppConfig()
+    config.audio.release_tail_seconds = 0.0
+    daemon = _build_daemon(monkeypatch, config=config)
+    daemon._supports_realtime_input = True
+    daemon.recorder.is_recording = True
+    with daemon._state_lock:
+        daemon._live_emitted_text = "he"
+        daemon._live_last_snapshot_samples = 10
+
+    daemon._stop_recording_and_queue_audio(reason="hotkey-release")
+
+    item = daemon._audio_queue.get_nowait()
+    assert item.emitted_prefix == "he"
+    assert item.audio.shape == (2, 1)
+    assert daemon._live_emitted_text == ""
+    assert daemon._live_last_snapshot_samples == 0
+
+
+def test_worker_streaming_skips_already_emitted_prefix(monkeypatch) -> None:
+    daemon = _build_daemon(monkeypatch)
+    daemon.transcriber.transcribe_stream = lambda *_args, **_kwargs: iter(["hello"])
+    daemon._audio_queue.put(
+        SimpleNamespace(
+            audio=np.array([[0.25], [0.5]], dtype=np.float32),
+            emitted_prefix="he",
+        )
+    )
+
+    worker = threading.Thread(target=daemon._worker_loop, daemon=True)
+    worker.start()
+    daemon._audio_queue.join()
+    daemon._stop_event.set()
+    worker.join(timeout=1.0)
+
+    assert daemon.injector.injected == ["llo"]
+
+
+def test_recover_missed_hotkey_release_stops_recording(monkeypatch) -> None:
+    daemon = _build_daemon(monkeypatch)
+    daemon.recorder.is_recording = True
+    daemon.hotkey.pressed = False
+
+    monotonic_values = iter([1.0, 1.4, 1.41])
+    monkeypatch.setattr(daemon_module.time, "monotonic", lambda: next(monotonic_values))
+
+    daemon._recover_missed_hotkey_release_if_needed()
+    assert daemon._audio_queue.qsize() == 0
+
+    daemon._recover_missed_hotkey_release_if_needed()
+    assert daemon.recorder.stop_calls == 1
+    assert daemon._audio_queue.qsize() == 1
+
+
+def test_append_only_delta_tolerates_non_monotonic_tail() -> None:
+    delta = daemon_module.MoonshineFlowDaemon._append_only_delta("hellp", "hello world")
+    assert delta == "o world"

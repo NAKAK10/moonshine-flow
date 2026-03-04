@@ -18,3 +18,5 @@ class MoonshineSTTBackend(MoonshineTranscriber, SpeechToTextBackend):
         if text:
             yield text
 
+    def supports_realtime_input(self) -> bool:
+        return False

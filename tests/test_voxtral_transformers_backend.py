@@ -59,6 +59,7 @@ def test_voxtral_transcribe_with_fake_transformers(monkeypatch) -> None:
 
     text = backend.transcribe(np.array([0.1, 0.2], dtype=np.float32), sample_rate=16000)
     assert text == "hello world"
+    assert backend.supports_realtime_input() is True
 
 
 def test_voxtral_preflight_falls_back_without_accelerate(monkeypatch) -> None:

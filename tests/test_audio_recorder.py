@@ -224,3 +224,24 @@ def test_is_stream_active_reflects_stream_state(monkeypatch) -> None:
     assert recorder._stream is not None
     recorder._stream.active = False
     assert recorder.is_stream_active() is False
+
+
+def test_snapshot_returns_buffer_without_stopping(monkeypatch) -> None:
+    monkeypatch.setattr("moonshine_flow.audio_recorder.sd.InputStream", _FakeStream)
+
+    recorder = AudioRecorder(
+        sample_rate=16000,
+        channels=1,
+        dtype="float32",
+        max_record_seconds=30,
+    )
+    recorder.start()
+    recorder._callback(np.array([[0.1], [0.2]], dtype=np.float32), 2, None, 0)
+
+    snap = recorder.snapshot()
+    assert recorder.is_recording is True
+    assert snap.shape == (2, 1)
+    assert np.allclose(snap[:, 0], np.array([0.1, 0.2], dtype=np.float32))
+
+    merged = recorder.stop()
+    assert np.allclose(merged[:, 0], np.array([0.1, 0.2], dtype=np.float32))

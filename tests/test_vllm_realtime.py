@@ -29,6 +29,7 @@ def test_append_trailing_silence_keeps_length_when_zero() -> None:
     audio = np.array([0.25, 0.5], dtype=np.float32)
     out = backend._append_trailing_silence(audio, sample_rate=16000)
     assert out.shape == audio.shape
+    assert backend.supports_realtime_input() is True
 
 
 def test_append_trailing_silence_extends_audio() -> None:
@@ -43,4 +44,3 @@ def test_append_trailing_silence_clamps_negative_to_zero() -> None:
     audio = np.array([0.25, 0.5], dtype=np.float32)
     out = backend._append_trailing_silence(audio, sample_rate=16000)
     assert out.shape == audio.shape
-

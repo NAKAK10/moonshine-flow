@@ -20,9 +20,11 @@ class SpeechToTextBackend(Protocol):
     def transcribe_stream(self, audio: np.ndarray, sample_rate: int) -> Iterator[str]:
         """Yield cumulative transcript updates for one audio segment."""
 
+    def supports_realtime_input(self) -> bool:
+        """Return whether this backend/model supports true live input while recording."""
+
     def backend_summary(self) -> str:
         """Return a short backend summary for diagnostics."""
 
     def close(self) -> None:
         """Release backend resources."""
-

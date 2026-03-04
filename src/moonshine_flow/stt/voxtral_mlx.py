@@ -12,6 +12,7 @@ from typing import Any
 import numpy as np
 
 from moonshine_flow.stt.base import SpeechToTextBackend
+from moonshine_flow.stt.realtime_capability import supports_realtime_input_model
 from moonshine_flow.text_processing.interfaces import NoopTextPostProcessor, TextPostProcessor
 from moonshine_flow.text_processing.normalizer import normalize_transcript_text
 
@@ -137,6 +138,11 @@ class VoxtralMLXSTTBackend(SpeechToTextBackend):
         text = self.transcribe(audio, sample_rate)
         if text:
             yield text
+
+    def supports_realtime_input(self) -> bool:
+        return supports_realtime_input_model(
+            self._settings.model_id
+        ) or supports_realtime_input_model(self._resolved_model_id)
 
     def _prepare_temp_wav(self, audio: np.ndarray, *, sample_rate: int) -> str:
         mono = self._to_mono_float32(audio)

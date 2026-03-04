@@ -11,6 +11,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from moonshine_flow.stt.base import SpeechToTextBackend
+from moonshine_flow.stt.realtime_capability import supports_realtime_input_model
 from moonshine_flow.stt.server import VLLMServerManager
 from moonshine_flow.text_processing.interfaces import NoopTextPostProcessor, TextPostProcessor
 from moonshine_flow.text_processing.normalizer import normalize_transcript_text
@@ -83,6 +84,9 @@ class VLLMRealtimeSTTBackend(SpeechToTextBackend):
                 yield cumulative
             if self._is_done_event(event):
                 break
+
+    def supports_realtime_input(self) -> bool:
+        return supports_realtime_input_model(self._settings.model_id)
 
     def _stream_events(self, pcm16: bytes) -> Iterator[dict[str, object]]:
         try:
@@ -209,4 +213,3 @@ class VLLMRealtimeSTTBackend(SpeechToTextBackend):
 
     def close(self) -> None:
         self._server_manager.stop()
-

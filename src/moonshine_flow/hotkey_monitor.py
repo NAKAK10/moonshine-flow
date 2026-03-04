@@ -22,6 +22,17 @@ SPECIAL_KEYS: dict[str, keyboard.Key] = {
     "left_ctrl": keyboard.Key.ctrl_l,
 }
 
+_MACOS_KEYCODE_BY_NAME: dict[str, int] = {
+    "right_cmd": 54,
+    "left_cmd": 55,
+    "right_shift": 60,
+    "left_shift": 56,
+    "right_alt": 61,
+    "left_alt": 58,
+    "right_ctrl": 62,
+    "left_ctrl": 59,
+}
+
 
 class HotkeyMonitor:
     """Monitor one key globally and emit press/release callbacks."""
@@ -40,9 +51,24 @@ class HotkeyMonitor:
         self._on_release_callback = on_release
         self._max_hold_seconds = max_hold_seconds if (max_hold_seconds or 0) > 0 else None
         self._pressed = False
+        self._physical_confirmed_pressed = False
         self._lock = threading.Lock()
         self._release_timer: threading.Timer | None = None
+        self._macos_keycode = _MACOS_KEYCODE_BY_NAME.get(self.key_name.strip().lower())
+        self._hid_key_state_reader = self._build_hid_key_state_reader()
         self._listener = keyboard.Listener(on_press=self._on_press, on_release=self._on_release)
+
+    @staticmethod
+    def _build_hid_key_state_reader() -> Callable[[int], bool] | None:
+        try:
+            from Quartz import CGEventSourceKeyState, kCGEventSourceStateHIDSystemState
+        except Exception:
+            return None
+
+        def _reader(keycode: int) -> bool:
+            return bool(CGEventSourceKeyState(kCGEventSourceStateHIDSystemState, keycode))
+
+        return _reader
 
     def _cancel_release_timer(self) -> None:
         if self._release_timer is None:
@@ -78,11 +104,24 @@ class HotkeyMonitor:
         return key == self._target_key
 
     def _on_press(self, key: keyboard.Key | keyboard.KeyCode | None) -> None:
+        recovered_stuck_release = False
         with self._lock:
-            if not self._matches(key) or self._pressed:
+            if not self._matches(key):
                 return
+            if self._pressed:
+                # Recover from a missed release event: synthesize one before
+                # accepting the new press so daemon state can recover quickly.
+                recovered_stuck_release = True
+                self._pressed = False
+                self._physical_confirmed_pressed = False
+                self._cancel_release_timer()
             self._pressed = True
             self._schedule_release_timer()
+            if self._physical_pressed_state() is True:
+                self._physical_confirmed_pressed = True
+        if recovered_stuck_release:
+            LOGGER.warning("Recovered hotkey state after missed release event: %s", self.key_name)
+            self._on_release_callback()
         LOGGER.debug("Hotkey down: %s", self.key_name)
         self._on_press_callback()
 
@@ -91,6 +130,7 @@ class HotkeyMonitor:
             if not self._matches(key) or not self._pressed:
                 return
             self._pressed = False
+            self._physical_confirmed_pressed = False
             self._cancel_release_timer()
         LOGGER.debug("Hotkey up: %s", self.key_name)
         self._on_release_callback()
@@ -100,6 +140,7 @@ class HotkeyMonitor:
             if not self._pressed:
                 return
             self._pressed = False
+            self._physical_confirmed_pressed = False
             self._release_timer = None
         LOGGER.warning(
             "Hotkey release fallback triggered after %.2fs: %s",
@@ -112,10 +153,37 @@ class HotkeyMonitor:
         """Start listening in background thread."""
         self._listener.start()
 
+    def _physical_pressed_state(self) -> bool | None:
+        if self._macos_keycode is None or self._hid_key_state_reader is None:
+            return None
+        try:
+            return self._hid_key_state_reader(self._macos_keycode)
+        except Exception:
+            return None
+
+    def is_pressed(self) -> bool:
+        with self._lock:
+            pressed = self._pressed
+            physical_confirmed = self._physical_confirmed_pressed
+
+        if not pressed:
+            return False
+
+        physical = self._physical_pressed_state()
+        if physical is True:
+            with self._lock:
+                if self._pressed:
+                    self._physical_confirmed_pressed = True
+            return True
+        if physical is False and physical_confirmed:
+            return False
+        return True
+
     def stop(self) -> None:
         """Stop listener."""
         with self._lock:
             self._pressed = False
+            self._physical_confirmed_pressed = False
             self._cancel_release_timer()
         self._listener.stop()
 

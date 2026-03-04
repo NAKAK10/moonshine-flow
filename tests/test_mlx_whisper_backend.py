@@ -52,4 +52,4 @@ def test_transcribe_stream_yields_single_final_text(monkeypatch, tmp_path) -> No
 
     updates = list(backend.transcribe_stream(np.array([0.1], dtype=np.float32), sample_rate=16000))
     assert updates == ["hello"]
-
+    assert backend.supports_realtime_input() is False

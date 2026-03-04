@@ -83,6 +83,7 @@ def test_voxtral_mlx_preflight_and_transcribe(monkeypatch) -> None:
 
     text = backend.transcribe(np.array([0.1, -0.2, 0.3], dtype=np.float32), sample_rate=16000)
     assert text == "hello world"
+    assert backend.supports_realtime_input() is True
     assert calls["model_path"] == "mlx-community/Voxtral-Mini-4B-Realtime-6bit"
     assert calls["n_delay_tokens"] == 6
     assert calls["temperature"] == 0.0

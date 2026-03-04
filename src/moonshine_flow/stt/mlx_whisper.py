@@ -93,6 +93,9 @@ class MLXWhisperSTTBackend(SpeechToTextBackend):
         if text:
             yield text
 
+    def supports_realtime_input(self) -> bool:
+        return False
+
     def _prepare_temp_wav(self, audio: np.ndarray, *, sample_rate: int) -> str:
         mono = self._to_mono_float32(audio)
         mono = self._append_trailing_silence(mono, sample_rate=sample_rate)
@@ -142,4 +145,3 @@ class MLXWhisperSTTBackend(SpeechToTextBackend):
 
     def close(self) -> None:
         return None
-
