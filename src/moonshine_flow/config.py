@@ -58,6 +58,8 @@ class AudioConfig(BaseModel):
     dtype: str = "float32"
     max_record_seconds: int = 30
     release_tail_seconds: float = 0.25
+    hotkey_release_reconcile_seconds: float = 0.25
+    hotkey_idle_reconcile_seconds: float = 1.0
     trailing_silence_seconds: float = 1.0
     input_device: int | str | None = None
     input_device_policy: InputDevicePolicy = InputDevicePolicy.PLAYBACK_FRIENDLY
@@ -73,6 +75,7 @@ class SttConfig(BaseModel):
     """Speech-to-text backend configuration."""
 
     model: str = "moonshine:base"
+    idle_shutdown_seconds: float = 30.0
 
 
 class OutputConfig(BaseModel):
@@ -134,6 +137,20 @@ def _clamp_audio_seconds(value: float, *, field_name: str) -> float:
     if value > 1.0:
         LOGGER.warning("audio.%s=%s exceeds 1.0; using 1.0", field_name, value)
         return 1.0
+    return value
+
+
+def _clamp_non_negative_seconds(value: float, *, field_name: str) -> float:
+    if value < 0.0:
+        LOGGER.warning("audio.%s=%s is below 0.0; using 0.0", field_name, value)
+        return 0.0
+    return value
+
+
+def _clamp_stt_non_negative_seconds(value: float, *, field_name: str) -> float:
+    if value < 0.0:
+        LOGGER.warning("stt.%s=%s is below 0.0; using 0.0", field_name, value)
+        return 0.0
     return value
 
 
@@ -215,13 +232,15 @@ def _dump_toml(data: dict[str, Any]) -> str:
             f"dtype = \"{data['audio']['dtype']}\"\n"
             f"max_record_seconds = {data['audio']['max_record_seconds']}\n"
             f"release_tail_seconds = {data['audio']['release_tail_seconds']}\n"
+            f"hotkey_release_reconcile_seconds = {data['audio']['hotkey_release_reconcile_seconds']}\n"
+            f"hotkey_idle_reconcile_seconds = {data['audio']['hotkey_idle_reconcile_seconds']}\n"
             f"trailing_silence_seconds = {data['audio']['trailing_silence_seconds']}\n"
             f"{input_device_line}\n"
             f"input_device_policy = \"{data['audio']['input_device_policy']}\"\n"
             "\n"
             "[stt]\n"
-            f"model = \"{data['stt']['model']}\"\n\n"
-            "\n"
+            f"model = \"{data['stt']['model']}\"\n"
+            f"idle_shutdown_seconds = {data['stt'].get('idle_shutdown_seconds', 30.0)}\n\n"
             "[model]\n"
             f"device = \"{data['model']['device']}\"\n\n"
             "[output]\n"
@@ -370,6 +389,14 @@ def load_config(path: Path | None = None, *, allow_legacy_model_size: bool = Fal
         float(config.audio.release_tail_seconds),
         field_name="release_tail_seconds",
     )
+    config.audio.hotkey_release_reconcile_seconds = _clamp_non_negative_seconds(
+        float(config.audio.hotkey_release_reconcile_seconds),
+        field_name="hotkey_release_reconcile_seconds",
+    )
+    config.audio.hotkey_idle_reconcile_seconds = _clamp_non_negative_seconds(
+        float(config.audio.hotkey_idle_reconcile_seconds),
+        field_name="hotkey_idle_reconcile_seconds",
+    )
     config.audio.trailing_silence_seconds = _clamp_audio_seconds(
         float(config.audio.trailing_silence_seconds),
         field_name="trailing_silence_seconds",
@@ -379,6 +406,10 @@ def load_config(path: Path | None = None, *, allow_legacy_model_size: bool = Fal
     )
     config.text.llm_correction.max_input_chars = _clamp_llm_max_input_chars(
         int(config.text.llm_correction.max_input_chars),
+    )
+    config.stt.idle_shutdown_seconds = _clamp_stt_non_negative_seconds(
+        float(config.stt.idle_shutdown_seconds),
+        field_name="idle_shutdown_seconds",
     )
     config.language = _normalize_top_level_language(str(config.language))
     config.stt.model = _normalize_stt_model(str(config.stt.model))

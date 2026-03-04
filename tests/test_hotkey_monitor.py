@@ -105,14 +105,32 @@ def test_is_pressed_prefers_physical_state_when_available(monkeypatch) -> None:
     assert monitor.is_pressed() is True
 
     monitor._physical_pressed_state = lambda: False
-    assert monitor.is_pressed() is False
+    assert monitor.is_pressed() is True
 
 
-def test_is_pressed_ignores_unconfirmed_physical_false(monkeypatch) -> None:
+def test_is_pressed_ignores_physical_false(monkeypatch) -> None:
     monkeypatch.setattr("moonshine_flow.hotkey_monitor.keyboard.Listener", _FakeListener)
 
     monitor = HotkeyMonitor("a", on_press=lambda: None, on_release=lambda: None, max_hold_seconds=1.0)
     monitor._physical_pressed_state = lambda: False
     monitor._on_press(monitor._target_key)
 
+    assert monitor.is_pressed() is True
+
+
+def test_on_press_accepts_event_even_when_physical_released(monkeypatch) -> None:
+    monkeypatch.setattr("moonshine_flow.hotkey_monitor.keyboard.Listener", _FakeListener)
+
+    pressed = 0
+
+    def on_press() -> None:
+        nonlocal pressed
+        pressed += 1
+
+    monitor = HotkeyMonitor("a", on_press=on_press, on_release=lambda: None, max_hold_seconds=1.0)
+    monitor._physical_pressed_state = lambda: False
+
+    monitor._on_press(monitor._target_key)
+
+    assert pressed == 1
     assert monitor.is_pressed() is True

@@ -23,7 +23,6 @@ LOGGER = logging.getLogger(__name__)
 _HOTKEY_COOLDOWN_SECONDS = 0.25
 _RECORDING_STALE_GRACE_SECONDS = 0.5
 _LIVE_INPUT_MIN_NEW_AUDIO_SECONDS = 0.1
-_HOTKEY_RELEASE_RECONCILE_SECONDS = 0.25
 _MAIN_LOOP_IDLE_SLEEP_SECONDS = 0.2
 _MAIN_LOOP_ACTIVE_SLEEP_SECONDS = 0.05
 
@@ -193,20 +192,27 @@ class MoonshineFlowDaemon:
             return
 
         emitted_prefix = ""
-        with self._live_input_lock:
-            try:
-                audio = self.recorder.stop()
-            except Exception:
-                LOGGER.exception("Failed to stop recording (%s)", reason)
-                return
-            finally:
-                with self._state_lock:
-                    self._last_release_at_monotonic = time.monotonic()
-                    self._recording_stale_since_monotonic = None
-                    self._hotkey_not_pressed_since_monotonic = None
-                    if self._live_input_enabled():
-                        emitted_prefix = self._live_emitted_text
-                        self._reset_live_state_locked()
+        lock_acquired = self._live_input_lock.acquire(timeout=0.2)
+        if not lock_acquired:
+            LOGGER.warning(
+                "Live input lock was busy during stop; forcing recorder stop (%s)",
+                reason,
+            )
+        try:
+            audio = self.recorder.stop()
+        except Exception:
+            LOGGER.exception("Failed to stop recording (%s)", reason)
+            return
+        finally:
+            with self._state_lock:
+                self._last_release_at_monotonic = time.monotonic()
+                self._recording_stale_since_monotonic = None
+                self._hotkey_not_pressed_since_monotonic = None
+                if self._live_input_enabled():
+                    emitted_prefix = self._live_emitted_text
+                    self._reset_live_state_locked()
+            if lock_acquired:
+                self._live_input_lock.release()
 
         if audio.size == 0:
             LOGGER.info("Skipped empty audio capture (%s)", reason)
@@ -314,12 +320,16 @@ class MoonshineFlowDaemon:
                     LOGGER.debug("Skipping non-monotonic streaming update")
         return delta
 
+    def _effective_hotkey_release_reconcile_seconds(self) -> float:
+        return max(0.0, float(getattr(self.config.audio, "hotkey_release_reconcile_seconds", 0.25)))
+
     def _recover_missed_hotkey_release_if_needed(self) -> None:
         if not self.recorder.is_recording:
             with self._state_lock:
                 self._hotkey_not_pressed_since_monotonic = None
             return
 
+        now = time.monotonic()
         is_pressed = getattr(self.hotkey, "is_pressed", None)
         if not callable(is_pressed):
             return
@@ -334,7 +344,6 @@ class MoonshineFlowDaemon:
                 self._hotkey_not_pressed_since_monotonic = None
             return
 
-        now = time.monotonic()
         with self._state_lock:
             if self._pending_stop_id is not None:
                 self._hotkey_not_pressed_since_monotonic = None
@@ -344,7 +353,8 @@ class MoonshineFlowDaemon:
                 self._hotkey_not_pressed_since_monotonic = now
                 return
             stale_for = now - stale_since
-        if stale_for < _HOTKEY_RELEASE_RECONCILE_SECONDS:
+        reconcile_seconds = self._effective_hotkey_release_reconcile_seconds()
+        if reconcile_seconds > 0.0 and stale_for < reconcile_seconds:
             return
 
         LOGGER.warning(
@@ -390,9 +400,40 @@ class MoonshineFlowDaemon:
                 self._recording_stale_since_monotonic = None
                 self._last_release_at_monotonic = now
 
+    def _release_idle_transcriber_resources_if_needed(self) -> None:
+        if self.recorder.is_recording:
+            return
+        with self._state_lock:
+            if self._transcription_in_progress:
+                return
+        if not self._audio_queue.empty():
+            return
+        maybe_release = getattr(self.transcriber, "maybe_release_idle_resources", None)
+        if not callable(maybe_release):
+            return
+        try:
+            maybe_release()
+        except Exception:
+            LOGGER.debug("Failed to release idle STT resources cleanly", exc_info=True)
+
+    def _transcriber_uses_external_server(self) -> bool:
+        summary_fn = getattr(self.transcriber, "backend_summary", None)
+        if not callable(summary_fn):
+            return False
+        try:
+            summary = str(summary_fn())
+        except Exception:
+            return False
+        return "backend=vllm-realtime" in summary
+
     def run_forever(self) -> None:
         """Run daemon until stop() is called."""
         LOGGER.info("Moonshine Flow daemon starting (%s)", self.transcriber.backend_summary())
+        if not self._transcriber_uses_external_server():
+            LOGGER.info(
+                "🚀 Backend session active (no external server): %s",
+                self.transcriber.backend_summary(),
+            )
         self._worker.start()
         self.hotkey.start()
 
@@ -401,6 +442,7 @@ class MoonshineFlowDaemon:
                 self._process_live_input_tick()
                 self._recover_missed_hotkey_release_if_needed()
                 self._recover_stale_recording_if_needed()
+                self._release_idle_transcriber_resources_if_needed()
                 if self._live_input_enabled() and self.recorder.is_recording:
                     time.sleep(_MAIN_LOOP_ACTIVE_SLEEP_SECONDS)
                 else:
@@ -414,6 +456,11 @@ class MoonshineFlowDaemon:
             return
 
         self._stop_event.set()
+        if not self._transcriber_uses_external_server():
+            LOGGER.info(
+                "💨 Backend session stopped (no external server): %s",
+                self.transcriber.backend_summary(),
+            )
         with self._live_input_lock:
             with self._state_lock:
                 self._cancel_pending_stop_locked()

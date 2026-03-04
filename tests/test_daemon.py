@@ -59,6 +59,7 @@ class _FakeTranscriber:
     def __init__(self, **kwargs) -> None:
         del kwargs
         self.calls: list[np.ndarray] = []
+        self.idle_release_calls = 0
 
     def transcribe(self, audio: np.ndarray, sample_rate: int) -> str:
         del sample_rate
@@ -73,6 +74,9 @@ class _FakeTranscriber:
 
     def backend_summary(self) -> str:
         return "fake-backend"
+
+    def maybe_release_idle_resources(self) -> None:
+        self.idle_release_calls += 1
 
     def close(self) -> None:
         return None
@@ -359,3 +363,47 @@ def test_daemon_passes_audio_input_device_policy_to_recorder(monkeypatch) -> Non
     _build_daemon(monkeypatch, config=config)
 
     assert _FakeRecorder.last_input_device_policy == "external_preferred"
+
+
+def test_release_idle_transcriber_resources_when_idle(monkeypatch) -> None:
+    daemon = _build_daemon(monkeypatch)
+    daemon._release_idle_transcriber_resources_if_needed()
+
+    assert daemon.transcriber.idle_release_calls == 1
+
+
+def test_release_idle_transcriber_resources_skips_when_busy(monkeypatch) -> None:
+    daemon = _build_daemon(monkeypatch)
+
+    daemon.recorder.is_recording = True
+    daemon._release_idle_transcriber_resources_if_needed()
+    assert daemon.transcriber.idle_release_calls == 0
+
+    daemon.recorder.is_recording = False
+    with daemon._state_lock:
+        daemon._transcription_in_progress = True
+    daemon._release_idle_transcriber_resources_if_needed()
+    assert daemon.transcriber.idle_release_calls == 0
+
+    with daemon._state_lock:
+        daemon._transcription_in_progress = False
+    daemon._audio_queue.put(object())
+    daemon._release_idle_transcriber_resources_if_needed()
+    assert daemon.transcriber.idle_release_calls == 0
+
+
+def test_stop_recording_forces_stop_when_live_input_lock_busy(monkeypatch) -> None:
+    config = AppConfig()
+    config.audio.release_tail_seconds = 0.0
+    daemon = _build_daemon(monkeypatch, config=config)
+    daemon.recorder.is_recording = True
+
+    daemon._live_input_lock.acquire()
+    try:
+        daemon._stop_recording_and_queue_audio(reason="hotkey-release-reconciled")
+    finally:
+        if daemon._live_input_lock.locked():
+            daemon._live_input_lock.release()
+
+    assert daemon.recorder.stop_calls == 1
+    assert daemon._audio_queue.qsize() == 1

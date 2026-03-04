@@ -144,6 +144,12 @@ class VoxtralMLXSTTBackend(SpeechToTextBackend):
             self._settings.model_id
         ) or supports_realtime_input_model(self._resolved_model_id)
 
+    def maybe_release_idle_resources(self) -> None:
+        return None
+
+    def runtime_status(self) -> str:
+        return f"🚀 Backend ready (no external server): {self.backend_summary()}"
+
     def _prepare_temp_wav(self, audio: np.ndarray, *, sample_rate: int) -> str:
         mono = self._to_mono_float32(audio)
         mono = self._append_trailing_silence(mono, sample_rate=sample_rate)

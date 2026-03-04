@@ -6,9 +6,14 @@ import moonshine_flow.stt.factory as factory_module
 from moonshine_flow.stt.factory import create_stt_backend, parse_stt_model
 
 
-def _config(model_token: str, *, trailing_silence_seconds: float = 1.0):
+def _config(
+    model_token: str,
+    *,
+    trailing_silence_seconds: float = 1.0,
+    idle_shutdown_seconds: float = 30.0,
+):
     return SimpleNamespace(
-        stt=SimpleNamespace(model=model_token),
+        stt=SimpleNamespace(model=model_token, idle_shutdown_seconds=idle_shutdown_seconds),
         language="ja",
         model=SimpleNamespace(device="mps"),
         audio=SimpleNamespace(trailing_silence_seconds=trailing_silence_seconds),
@@ -41,6 +46,7 @@ def test_create_stt_backend_builds_vllm_backend() -> None:
     backend = create_stt_backend(_config("vllm:mistralai/Voxtral-Mini-4B-Realtime-2602"))
     assert backend.__class__.__name__ == "VLLMRealtimeSTTBackend"
     assert backend._settings.trailing_silence_seconds == 0.0
+    assert backend._settings.idle_shutdown_seconds == 30.0
 
 
 def test_create_stt_backend_builds_voxtral_backend(monkeypatch) -> None:
@@ -89,3 +95,13 @@ def test_create_stt_backend_rejects_mlx_backend_on_unsupported_platform(monkeypa
 def test_create_stt_backend_rejects_unknown_backend_prefix() -> None:
     with pytest.raises(ValueError, match="Unsupported STT backend"):
         create_stt_backend(_config("unknown:model"))
+
+
+def test_runtime_status_for_moonshine_reports_no_external_server() -> None:
+    backend = create_stt_backend(_config("moonshine:base"))
+    assert backend.runtime_status().startswith("🚀 Backend ready (no external server):")
+
+
+def test_runtime_status_for_vllm_reports_external_server_state() -> None:
+    backend = create_stt_backend(_config("vllm:mistralai/Voxtral-Mini-4B-Realtime-2602"))
+    assert backend.runtime_status().startswith("💨 External server stopped:")

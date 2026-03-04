@@ -26,6 +26,7 @@ class VLLMRealtimeBackendSettings:
     model_id: str
     language: str
     trailing_silence_seconds: float
+    idle_shutdown_seconds: float = 30.0
 
 
 class VLLMRealtimeSTTBackend(SpeechToTextBackend):
@@ -66,6 +67,7 @@ class VLLMRealtimeSTTBackend(SpeechToTextBackend):
         if audio.size == 0:
             return
         self._ensure_ready()
+        self._server_manager.mark_activity()
         pcm16 = self._prepare_pcm16(audio, sample_rate=sample_rate)
         if not pcm16:
             return
@@ -84,9 +86,22 @@ class VLLMRealtimeSTTBackend(SpeechToTextBackend):
                 yield cumulative
             if self._is_done_event(event):
                 break
+        self._server_manager.mark_activity()
 
     def supports_realtime_input(self) -> bool:
         return supports_realtime_input_model(self._settings.model_id)
+
+    def maybe_release_idle_resources(self) -> None:
+        idle_seconds = float(self._settings.idle_shutdown_seconds)
+        self._server_manager.stop_if_idle(idle_seconds)
+
+    def runtime_status(self) -> str:
+        summary = self.backend_summary()
+        try:
+            endpoint = self._server_manager.endpoint_url
+        except Exception:
+            return f"💨 External server stopped: {summary}"
+        return f"🚀 External server active: {summary} endpoint={endpoint}"
 
     def _stream_events(self, pcm16: bytes) -> Iterator[dict[str, object]]:
         try:

@@ -8,6 +8,9 @@ language = "en"
 #   voxtral:mistralai/Voxtral-Mini-4B-Realtime-2602
 #   vllm:mistralai/Voxtral-Mini-4B-Realtime-2602
 model = "moonshine:base"
+# Auto-stop backend resources after this many idle seconds.
+# 0 disables idle shutdown.
+idle_shutdown_seconds = 30.0
 
 [hotkey]
 key = "right_cmd"
@@ -20,6 +23,12 @@ max_record_seconds = 30
 # Keep recording this many seconds after key release to avoid clipping the utterance tail.
 # Value is clamped to [0.0, 1.0].
 release_tail_seconds = 0.25
+# Reconcile missed release callbacks when hotkey is no longer pressed.
+# Value is clamped to >= 0.0.
+hotkey_release_reconcile_seconds = 0.25
+# Extra fallback reconcile when hotkey appears pressed but recorder buffer stops growing.
+# Value is clamped to >= 0.0.
+hotkey_idle_reconcile_seconds = 1.0
 # Add trailing silence before transcription for decoder stability.
 # Value is clamped to [0.0, 1.0].
 trailing_silence_seconds = 1.0

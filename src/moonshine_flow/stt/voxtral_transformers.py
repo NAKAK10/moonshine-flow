@@ -130,6 +130,12 @@ class VoxtralTransformersSTTBackend(SpeechToTextBackend):
     def supports_realtime_input(self) -> bool:
         return supports_realtime_input_model(self._settings.model_id)
 
+    def maybe_release_idle_resources(self) -> None:
+        return None
+
+    def runtime_status(self) -> str:
+        return f"🚀 Backend ready (no external server): {self.backend_summary()}"
+
     @staticmethod
     def _to_mono_float32(audio: np.ndarray) -> np.ndarray:
         if audio.ndim == 2:

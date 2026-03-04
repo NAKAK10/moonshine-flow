@@ -51,7 +51,6 @@ class HotkeyMonitor:
         self._on_release_callback = on_release
         self._max_hold_seconds = max_hold_seconds if (max_hold_seconds or 0) > 0 else None
         self._pressed = False
-        self._physical_confirmed_pressed = False
         self._lock = threading.Lock()
         self._release_timer: threading.Timer | None = None
         self._macos_keycode = _MACOS_KEYCODE_BY_NAME.get(self.key_name.strip().lower())
@@ -113,12 +112,9 @@ class HotkeyMonitor:
                 # accepting the new press so daemon state can recover quickly.
                 recovered_stuck_release = True
                 self._pressed = False
-                self._physical_confirmed_pressed = False
                 self._cancel_release_timer()
             self._pressed = True
             self._schedule_release_timer()
-            if self._physical_pressed_state() is True:
-                self._physical_confirmed_pressed = True
         if recovered_stuck_release:
             LOGGER.warning("Recovered hotkey state after missed release event: %s", self.key_name)
             self._on_release_callback()
@@ -130,7 +126,6 @@ class HotkeyMonitor:
             if not self._matches(key) or not self._pressed:
                 return
             self._pressed = False
-            self._physical_confirmed_pressed = False
             self._cancel_release_timer()
         LOGGER.debug("Hotkey up: %s", self.key_name)
         self._on_release_callback()
@@ -140,7 +135,6 @@ class HotkeyMonitor:
             if not self._pressed:
                 return
             self._pressed = False
-            self._physical_confirmed_pressed = False
             self._release_timer = None
         LOGGER.warning(
             "Hotkey release fallback triggered after %.2fs: %s",
@@ -161,29 +155,18 @@ class HotkeyMonitor:
         except Exception:
             return None
 
+    def physical_pressed_state(self) -> bool | None:
+        """Return current physical pressed state when available (macOS Quartz)."""
+        return self._physical_pressed_state()
+
     def is_pressed(self) -> bool:
         with self._lock:
-            pressed = self._pressed
-            physical_confirmed = self._physical_confirmed_pressed
-
-        if not pressed:
-            return False
-
-        physical = self._physical_pressed_state()
-        if physical is True:
-            with self._lock:
-                if self._pressed:
-                    self._physical_confirmed_pressed = True
-            return True
-        if physical is False and physical_confirmed:
-            return False
-        return True
+            return self._pressed
 
     def stop(self) -> None:
         """Stop listener."""
         with self._lock:
             self._pressed = False
-            self._physical_confirmed_pressed = False
             self._cancel_release_timer()
         self._listener.stop()
 

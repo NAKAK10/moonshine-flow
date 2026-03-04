@@ -14,7 +14,10 @@ def test_write_example_and_load_config(tmp_path: Path) -> None:
     assert loaded.hotkey.key == "right_cmd"
     assert loaded.language == "en"
     assert loaded.stt.model == "moonshine:base"
+    assert loaded.stt.idle_shutdown_seconds == 30.0
     assert loaded.audio.release_tail_seconds == 0.25
+    assert loaded.audio.hotkey_release_reconcile_seconds == 0.25
+    assert loaded.audio.hotkey_idle_reconcile_seconds == 1.0
     assert loaded.audio.trailing_silence_seconds == 1.0
     assert loaded.audio.input_device_policy.value == "playback_friendly"
     assert loaded.output.mode.value == "direct_typing"
@@ -32,8 +35,11 @@ def test_load_config_creates_missing_file(tmp_path: Path) -> None:
 
     assert cfg_path.exists()
     assert loaded.audio.sample_rate == 16000
+    assert loaded.audio.hotkey_release_reconcile_seconds == 0.25
+    assert loaded.audio.hotkey_idle_reconcile_seconds == 1.0
     assert loaded.audio.trailing_silence_seconds == 1.0
     assert loaded.audio.input_device_policy.value == "playback_friendly"
+    assert loaded.stt.idle_shutdown_seconds == 30.0
     assert loaded.language == "en"
     assert loaded.output.mode.value == "direct_typing"
 
@@ -153,6 +159,47 @@ notify_on_error = true
     loaded = load_config(cfg_path)
     assert loaded.audio.release_tail_seconds == 0.0
     assert loaded.audio.trailing_silence_seconds == 0.0
+
+
+def test_load_config_clamps_hotkey_reconcile_seconds_under_zero(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        """
+language = "ja"
+
+[hotkey]
+key = "right_cmd"
+
+[audio]
+sample_rate = 16000
+channels = 1
+dtype = "float32"
+max_record_seconds = 30
+hotkey_release_reconcile_seconds = -0.5
+hotkey_idle_reconcile_seconds = -1.0
+
+[stt]
+model = "moonshine:base"
+idle_shutdown_seconds = -5.0
+
+[model]
+device = "mps"
+
+[output]
+mode = "clipboard_paste"
+paste_shortcut = "cmd+v"
+
+[runtime]
+log_level = "INFO"
+notify_on_error = true
+""".strip(),
+        encoding="utf-8",
+    )
+
+    loaded = load_config(cfg_path)
+    assert loaded.audio.hotkey_release_reconcile_seconds == 0.0
+    assert loaded.audio.hotkey_idle_reconcile_seconds == 0.0
+    assert loaded.stt.idle_shutdown_seconds == 0.0
 
 
 def test_load_config_clamps_llm_timeout_and_input_chars(tmp_path: Path) -> None:

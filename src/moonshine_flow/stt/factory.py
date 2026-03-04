@@ -64,11 +64,13 @@ def create_stt_backend(
     if prefix == "vllm":
         language = str(getattr(config, "language", "en")).strip().lower() or "en"
         audio_cfg = getattr(config, "audio", None)
+        stt_cfg = getattr(config, "stt", None)
         trailing_silence_seconds = _effective_trailing_silence_seconds_for_realtime(audio_cfg)
         settings = VLLMRealtimeBackendSettings(
             model_id=model_id,
             language=language,
             trailing_silence_seconds=trailing_silence_seconds,
+            idle_shutdown_seconds=float(getattr(stt_cfg, "idle_shutdown_seconds", 30.0)),
         )
         return VLLMRealtimeSTTBackend(settings, post_processor=processor)
 

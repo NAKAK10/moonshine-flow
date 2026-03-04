@@ -1,5 +1,6 @@
 import argparse
 import sys
+import types
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -159,6 +160,66 @@ def test_should_enable_llm_correction_for_this_run_mode_ask_non_interactive(monk
     assert cli._should_enable_llm_correction_for_this_run(llm_cfg) is False
 
 
+def test_cmd_run_logs_runtime_status_after_preflight(monkeypatch, caplog) -> None:
+    class FakeTranscriber:
+        def preflight_model(self) -> str:
+            return "voxtral-mlx"
+
+        def runtime_status(self) -> str:
+            return "🚀 Backend ready (no external server): backend=voxtral-mlx"
+
+        def backend_summary(self) -> str:
+            return "backend=voxtral-mlx model=mlx-community/Voxtral-Mini-4B-Realtime-6bit language=ja"
+
+        def close(self) -> None:
+            return None
+
+    class FakeDaemon:
+        def __init__(self, *_args, **_kwargs) -> None:
+            self.transcriber = FakeTranscriber()
+
+        def run_forever(self) -> None:
+            raise KeyboardInterrupt
+
+        def stop(self) -> None:
+            return None
+
+    config = SimpleNamespace(
+        runtime=SimpleNamespace(log_level="INFO"),
+        stt=SimpleNamespace(model="voxtral:mistralai/Voxtral-Mini-4B-Realtime-2602"),
+        output=SimpleNamespace(mode="direct_typing", paste_shortcut="cmd+v"),
+        text=SimpleNamespace(llm_correction=SimpleNamespace(mode="never")),
+    )
+    correction_result = SimpleNamespace(warnings=[], loaded=False, rules=object())
+
+    monkeypatch.setattr(cli, "_resolve_config_path", lambda _path: Path("/tmp/config.toml"))
+    monkeypatch.setattr(cli, "load_config", lambda _path: config)
+    monkeypatch.setattr(cli, "configure_logging", lambda _level: None)
+    monkeypatch.setattr(cli, "_load_corrections_with_diagnostics", lambda *_args, **_kwargs: (correction_result, None))
+    monkeypatch.setattr(cli, "_is_moonshine_stt_model", lambda _config: False)
+    monkeypatch.setattr(cli, "_is_vllm_stt_model", lambda _config: False)
+    monkeypatch.setattr(cli, "_is_voxtral_stt_model", lambda _config: False)
+    monkeypatch.setattr(cli, "_is_mlx_stt_model", lambda _config: False)
+    monkeypatch.setattr(
+        cli,
+        "check_all_permissions",
+        lambda: PermissionReport(microphone=True, accessibility=True, input_monitoring=True),
+    )
+    monkeypatch.setattr(cli, "_llm_enabled_for_this_run", lambda _config: False)
+    monkeypatch.setattr(cli, "_build_runtime_post_processor", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(cli, "_streaming_supported_by_output_mode", lambda _config: True)
+    fake_daemon_module = types.ModuleType("moonshine_flow.daemon")
+    fake_daemon_module.MoonshineFlowDaemon = FakeDaemon
+    monkeypatch.setitem(sys.modules, "moonshine_flow.daemon", fake_daemon_module)
+
+    with caplog.at_level("INFO"):
+        exit_code = cli.cmd_run(argparse.Namespace(config=None))
+
+    assert exit_code == 0
+    assert any("Model preflight OK (voxtral-mlx)" in entry.message for entry in caplog.records)
+    assert any("🚀 Backend ready (no external server): backend=voxtral-mlx" in entry.message for entry in caplog.records)
+
+
 def test_has_moonshine_backend_true(monkeypatch) -> None:
     monkeypatch.setattr(
         cli,
@@ -294,10 +355,13 @@ def test_cmd_init_updates_values_and_keeps_others(monkeypatch, tmp_path: Path, c
             "",  # audio.dtype
             "",  # audio.max_record_seconds
             "",  # audio.release_tail_seconds
+            "",  # audio.hotkey_release_reconcile_seconds
+            "",  # audio.hotkey_idle_reconcile_seconds
             "",  # audio.trailing_silence_seconds
             "",  # audio.input_device
             "",  # audio.input_device_policy
             "",  # stt.model
+            "",  # stt.idle_shutdown_seconds
             "ja",  # language
             "",  # model.device
             "",  # output.mode
@@ -343,10 +407,13 @@ def test_cmd_init_accepts_provider_other(monkeypatch, tmp_path: Path, capsys) ->
             "",  # audio.dtype
             "",  # audio.max_record_seconds
             "",  # audio.release_tail_seconds
+            "",  # audio.hotkey_release_reconcile_seconds
+            "",  # audio.hotkey_idle_reconcile_seconds
             "",  # audio.trailing_silence_seconds
             "",  # audio.input_device
             "",  # audio.input_device_policy
             "",  # stt.model
+            "",  # stt.idle_shutdown_seconds
             "",  # language
             "",  # model.device
             "",  # output.mode

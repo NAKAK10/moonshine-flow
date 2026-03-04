@@ -97,6 +97,7 @@ Key settings:
 - `text.llm_correction.max_input_chars`: clamped to `50..5000`.
 - `text.llm_correction.enabled_tools`: tool-calling switch for supporting endpoints.
 - `stt.model`: backend/model token (`moonshine:tiny`, `moonshine:base`, `voxtral:<model-id>`, `mlx:<model-id>`, `vllm:<model-id>`).
+- `stt.idle_shutdown_seconds`: idle seconds before releasing backend resources (`30.0` default, clamped to `>=0.0`, `0` disables idle shutdown).
 - `language`: transcription/correction language (explicit value such as `ja` / `en`; `auto` unsupported).
 - `model.device`: `mps` / `cpu`.
 

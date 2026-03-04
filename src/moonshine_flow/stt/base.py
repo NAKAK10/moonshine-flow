@@ -23,6 +23,12 @@ class SpeechToTextBackend(Protocol):
     def supports_realtime_input(self) -> bool:
         """Return whether this backend/model supports true live input while recording."""
 
+    def maybe_release_idle_resources(self) -> None:
+        """Release optional backend resources when daemon detects an idle period."""
+
+    def runtime_status(self) -> str:
+        """Return runtime state text for operator-facing logs."""
+
     def backend_summary(self) -> str:
         """Return a short backend summary for diagnostics."""
 

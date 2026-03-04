@@ -1185,6 +1185,16 @@ def cmd_init(args: argparse.Namespace) -> int:
             minimum=0.0,
             maximum=1.0,
         )
+        config.audio.hotkey_release_reconcile_seconds = _prompt_float(
+            "audio.hotkey_release_reconcile_seconds",
+            float(config.audio.hotkey_release_reconcile_seconds),
+            minimum=0.0,
+        )
+        config.audio.hotkey_idle_reconcile_seconds = _prompt_float(
+            "audio.hotkey_idle_reconcile_seconds",
+            float(config.audio.hotkey_idle_reconcile_seconds),
+            minimum=0.0,
+        )
         config.audio.trailing_silence_seconds = _prompt_float(
             "audio.trailing_silence_seconds",
             float(config.audio.trailing_silence_seconds),
@@ -1198,6 +1208,11 @@ def cmd_init(args: argparse.Namespace) -> int:
         )
 
         config.stt.model = _prompt_stt_model(config.stt.model)
+        config.stt.idle_shutdown_seconds = _prompt_float(
+            "stt.idle_shutdown_seconds",
+            float(config.stt.idle_shutdown_seconds),
+            minimum=0.0,
+        )
         config.language = _prompt_text("language", config.language)
         config.model.device = _prompt_text("model.device", config.model.device)
 
@@ -1527,6 +1542,11 @@ def cmd_run(args: argparse.Namespace) -> int:
     try:
         backend = daemon.transcriber.preflight_model()
         LOGGER.info(_green("Model preflight OK (%s)", stderr=True), backend)
+        runtime_status = getattr(daemon.transcriber, "runtime_status", None)
+        if callable(runtime_status):
+            LOGGER.info(runtime_status())
+        else:
+            LOGGER.info("🚀 Runtime state: %s", daemon.transcriber.backend_summary())
     except Exception as exc:
         LOGGER.error("Model preflight failed: %s", exc)
         if "incompatible architecture" in str(exc).lower():

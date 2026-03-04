@@ -20,3 +20,9 @@ class MoonshineSTTBackend(MoonshineTranscriber, SpeechToTextBackend):
 
     def supports_realtime_input(self) -> bool:
         return False
+
+    def maybe_release_idle_resources(self) -> None:
+        return None
+
+    def runtime_status(self) -> str:
+        return f"🚀 Backend ready (no external server): {self.backend_summary()}"
