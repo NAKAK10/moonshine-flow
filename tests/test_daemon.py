@@ -6,8 +6,8 @@ from types import SimpleNamespace
 
 import numpy as np
 
-import moonshine_flow.daemon as daemon_module
-from moonshine_flow.config import AppConfig
+import ptarmigan_flow.daemon as daemon_module
+from ptarmigan_flow.config import AppConfig
 
 
 class _FakeRecorder:
@@ -173,7 +173,7 @@ def _build_daemon(
     monkeypatch,
     *,
     config: AppConfig | None = None,
-) -> daemon_module.MoonshineFlowDaemon:
+) -> daemon_module.PtarmiganFlowDaemon:
     monkeypatch.setattr(daemon_module, "AudioRecorder", _FakeRecorder)
     monkeypatch.setattr(
         daemon_module,
@@ -187,7 +187,7 @@ def _build_daemon(
         "create_activity_indicator",
         lambda *_args, **_kwargs: _FakeActivityIndicator(),
     )
-    return daemon_module.MoonshineFlowDaemon(config or AppConfig())
+    return daemon_module.PtarmiganFlowDaemon(config or AppConfig())
 
 
 def test_hotkey_down_ignored_while_transcription_busy(monkeypatch) -> None:
@@ -483,7 +483,7 @@ def test_recover_missed_hotkey_release_stops_recording(monkeypatch) -> None:
 
 
 def test_append_only_delta_tolerates_non_monotonic_tail() -> None:
-    delta = daemon_module.MoonshineFlowDaemon._append_only_delta("hellp", "hello world")
+    delta = daemon_module.PtarmiganFlowDaemon._append_only_delta("hellp", "hello world")
     assert delta == "o world"
 
 
@@ -493,7 +493,7 @@ def test_append_only_delta_keeps_phrase_overlap_without_aggressive_trim() -> Non
         "同じ情報が2度入力される場合があるのでその対策を行います"
         "場合があるのでその対策を行ってください"
     )
-    delta = daemon_module.MoonshineFlowDaemon._append_only_delta(previous, current)
+    delta = daemon_module.PtarmiganFlowDaemon._append_only_delta(previous, current)
     assert delta == "場合があるのでその対策を行ってください"
 
 

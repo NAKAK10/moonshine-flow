@@ -2,8 +2,8 @@ from types import SimpleNamespace
 
 import pytest
 
-import moonshine_flow.stt.factory as factory_module
-from moonshine_flow.stt.factory import create_stt_backend, parse_stt_model
+import ptarmigan_flow.stt.factory as factory_module
+from ptarmigan_flow.stt.factory import create_stt_backend, parse_stt_model
 
 
 def _config(

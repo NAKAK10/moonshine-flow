@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-TAP="nakak10/moonshine-flow"
-TAP_URL="https://github.com/NAKAK10/moonshine-flow"
-FORMULA="moonshine-flow"
-EXPECTED_REPO="nakak10/moonshine-flow"
+TAP="nakak10/ptarmigan-flow"
+TAP_URL="https://github.com/NAKAK10/ptarmigan-flow"
+FORMULA="ptarmigan-flow"
+EXPECTED_REPO="nakak10/ptarmigan-flow"
 TAP_EXISTS=0
 BREW_PREFIX=""
 
@@ -111,5 +111,5 @@ else
   echo "Installed HEAD release: ${FORMULA}"
 fi
 
-moonshine-flow --help >/dev/null
-echo "Done. Verified command: moonshine-flow --help"
+ptarmigan-flow --help >/dev/null
+echo "Done. Verified command: ptarmigan-flow --help"

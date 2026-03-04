@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 
-import moonshine_flow.stt.server as server_module
+import ptarmigan_flow.stt.server as server_module
 
 
 class _FakeProcess:

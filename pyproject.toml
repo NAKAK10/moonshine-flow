@@ -1,11 +1,11 @@
 [project]
-name = "moonshine-flow"
+name = "ptarmigan-flow"
 dynamic = ["version"]
 description = "Push-to-talk transcription daemon for macOS using Moonshine"
 readme = "README.md"
 requires-python = ">=3.11,<3.12"
 authors = [
-  { name = "Moonshine Flow Contributors" }
+  { name = "Ptarmigan Flow Contributors" }
 ]
 dependencies = [
   "numpy>=2.0.0",
@@ -34,8 +34,8 @@ dev = [
 ]
 
 [project.scripts]
-moonshine-flow = "moonshine_flow.cli:main"
-mflow = "moonshine_flow.cli:main"
+ptarmigan-flow = "ptarmigan_flow.cli:main"
+pflow = "ptarmigan_flow.cli:main"
 
 [build-system]
 requires = ["hatchling>=1.27.0", "hatch-vcs>=0.4.0"]

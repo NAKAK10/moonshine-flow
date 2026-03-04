@@ -3,7 +3,7 @@ import subprocess
 import pyperclip
 import pytest
 
-from moonshine_flow.output_injector import OutputInjector
+from ptarmigan_flow.output_injector import OutputInjector
 
 
 def test_parse_shortcut() -> None:

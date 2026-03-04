@@ -382,7 +382,7 @@ wheels = [
 ]
 
 [[package]]
-name = "moonshine-flow"
+name = "ptarmigan-flow"
 source = { editable = "." }
 dependencies = [
     { name = "mistral-common", extra = ["audio"] },

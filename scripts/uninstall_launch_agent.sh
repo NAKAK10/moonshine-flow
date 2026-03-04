@@ -1,4 +1,4 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-uv run moonshine-flow uninstall-launch-agent
+uv run ptarmigan-flow uninstall-launch-agent

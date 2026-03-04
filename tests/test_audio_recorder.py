@@ -3,8 +3,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-import moonshine_flow.audio_recorder as audio_recorder_module
-from moonshine_flow.audio_recorder import AudioRecorder
+import ptarmigan_flow.audio_recorder as audio_recorder_module
+from ptarmigan_flow.audio_recorder import AudioRecorder
 
 
 class _FakeStream:
@@ -66,7 +66,7 @@ def _reset_state_aware_stream() -> None:
 
 def test_recorder_opens_and_closes_per_recording(monkeypatch) -> None:
     _reset_fake_stream()
-    monkeypatch.setattr("moonshine_flow.audio_recorder.sd.InputStream", _FakeStream)
+    monkeypatch.setattr("ptarmigan_flow.audio_recorder.sd.InputStream", _FakeStream)
 
     recorder = AudioRecorder(
         sample_rate=16000,
@@ -88,7 +88,7 @@ def test_recorder_opens_and_closes_per_recording(monkeypatch) -> None:
 
 def test_recorder_passes_input_device_when_configured(monkeypatch) -> None:
     _reset_fake_stream()
-    monkeypatch.setattr("moonshine_flow.audio_recorder.sd.InputStream", _FakeStream)
+    monkeypatch.setattr("ptarmigan_flow.audio_recorder.sd.InputStream", _FakeStream)
 
     recorder = AudioRecorder(
         sample_rate=16000,
@@ -124,7 +124,7 @@ def test_stop_captures_final_callback_frames(monkeypatch) -> None:
         def close(self) -> None:
             return None
 
-    monkeypatch.setattr("moonshine_flow.audio_recorder.sd.InputStream", _CallbackOnStopStream)
+    monkeypatch.setattr("ptarmigan_flow.audio_recorder.sd.InputStream", _CallbackOnStopStream)
 
     recorder = AudioRecorder(
         sample_rate=16000,
@@ -142,7 +142,7 @@ def test_stop_captures_final_callback_frames(monkeypatch) -> None:
 
 def test_recorder_uses_system_default_when_policy_is_system_default(monkeypatch) -> None:
     _reset_fake_stream()
-    monkeypatch.setattr("moonshine_flow.audio_recorder.sd.InputStream", _FakeStream)
+    monkeypatch.setattr("ptarmigan_flow.audio_recorder.sd.InputStream", _FakeStream)
 
     recorder = AudioRecorder(
         sample_rate=16000,
@@ -161,16 +161,16 @@ def test_recorder_uses_system_default_when_policy_is_system_default(monkeypatch)
 
 def test_playback_friendly_policy_avoids_bluetooth_default_input(monkeypatch) -> None:
     _reset_fake_stream()
-    monkeypatch.setattr("moonshine_flow.audio_recorder.sd.InputStream", _FakeStream)
+    monkeypatch.setattr("ptarmigan_flow.audio_recorder.sd.InputStream", _FakeStream)
     monkeypatch.setattr(
-        "moonshine_flow.audio_recorder.sd.query_devices",
+        "ptarmigan_flow.audio_recorder.sd.query_devices",
         lambda: [
             {"name": "MacBook Air Microphone", "max_input_channels": 1},
             {"name": "Keiju's AirPods", "max_input_channels": 1},
         ],
     )
     monkeypatch.setattr(
-        "moonshine_flow.audio_recorder.sd.default",
+        "ptarmigan_flow.audio_recorder.sd.default",
         type("DefaultDevice", (), {"device": (1, 1)})(),
     )
 
@@ -191,13 +191,13 @@ def test_playback_friendly_policy_avoids_bluetooth_default_input(monkeypatch) ->
 
 def test_playback_friendly_policy_keeps_non_bluetooth_default_input(monkeypatch) -> None:
     _reset_fake_stream()
-    monkeypatch.setattr("moonshine_flow.audio_recorder.sd.InputStream", _FakeStream)
+    monkeypatch.setattr("ptarmigan_flow.audio_recorder.sd.InputStream", _FakeStream)
     monkeypatch.setattr(
-        "moonshine_flow.audio_recorder.sd.query_devices",
+        "ptarmigan_flow.audio_recorder.sd.query_devices",
         lambda: [{"name": "MacBook Air Microphone", "max_input_channels": 1}],
     )
     monkeypatch.setattr(
-        "moonshine_flow.audio_recorder.sd.default",
+        "ptarmigan_flow.audio_recorder.sd.default",
         type("DefaultDevice", (), {"device": (0, 0)})(),
     )
 
@@ -217,7 +217,7 @@ def test_playback_friendly_policy_keeps_non_bluetooth_default_input(monkeypatch)
 
 
 def test_callback_stop_resets_recording_state(monkeypatch) -> None:
-    monkeypatch.setattr("moonshine_flow.audio_recorder.sd.InputStream", _FakeStream)
+    monkeypatch.setattr("ptarmigan_flow.audio_recorder.sd.InputStream", _FakeStream)
 
     recorder = AudioRecorder(
         sample_rate=16000,
@@ -237,7 +237,7 @@ def test_callback_stop_resets_recording_state(monkeypatch) -> None:
 
 def test_start_reopens_stale_stream_after_callback_stop(monkeypatch) -> None:
     _reset_state_aware_stream()
-    monkeypatch.setattr("moonshine_flow.audio_recorder.sd.InputStream", _StateAwareStream)
+    monkeypatch.setattr("ptarmigan_flow.audio_recorder.sd.InputStream", _StateAwareStream)
 
     recorder = AudioRecorder(
         sample_rate=10,
@@ -266,7 +266,7 @@ def test_start_reopens_stale_stream_after_callback_stop(monkeypatch) -> None:
 
 def test_is_stream_active_reflects_stream_state(monkeypatch) -> None:
     _reset_state_aware_stream()
-    monkeypatch.setattr("moonshine_flow.audio_recorder.sd.InputStream", _StateAwareStream)
+    monkeypatch.setattr("ptarmigan_flow.audio_recorder.sd.InputStream", _StateAwareStream)
 
     recorder = AudioRecorder(
         sample_rate=10,
@@ -285,7 +285,7 @@ def test_is_stream_active_reflects_stream_state(monkeypatch) -> None:
 
 
 def test_snapshot_returns_buffer_without_stopping(monkeypatch) -> None:
-    monkeypatch.setattr("moonshine_flow.audio_recorder.sd.InputStream", _FakeStream)
+    monkeypatch.setattr("ptarmigan_flow.audio_recorder.sd.InputStream", _FakeStream)
 
     recorder = AudioRecorder(
         sample_rate=16000,

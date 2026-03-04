@@ -1,4 +1,4 @@
-from moonshine_flow.stt.realtime_capability import supports_realtime_input_model
+from ptarmigan_flow.stt.realtime_capability import supports_realtime_input_model
 
 
 def test_supports_realtime_input_model_for_known_ids() -> None:

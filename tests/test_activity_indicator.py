@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from moonshine_flow.activity_indicator import (
+from ptarmigan_flow.activity_indicator import (
     NullActivityIndicator,
     SubprocessActivityIndicator,
     create_activity_indicator,
 )
-from moonshine_flow.config import AppConfig
+from ptarmigan_flow.config import AppConfig
 
 
 class _FakeStdin:
@@ -54,7 +54,7 @@ def test_show_recording_starts_overlay_and_sends_command(monkeypatch) -> None:
         started.append(process)
         return process
 
-    monkeypatch.setattr("moonshine_flow.activity_indicator.subprocess.Popen", _fake_popen)
+    monkeypatch.setattr("ptarmigan_flow.activity_indicator.subprocess.Popen", _fake_popen)
 
     indicator = SubprocessActivityIndicator(
         enabled=True,
@@ -77,7 +77,7 @@ def test_show_processing_reuses_running_overlay(monkeypatch) -> None:
         started.append(process)
         return process
 
-    monkeypatch.setattr("moonshine_flow.activity_indicator.subprocess.Popen", _fake_popen)
+    monkeypatch.setattr("ptarmigan_flow.activity_indicator.subprocess.Popen", _fake_popen)
 
     indicator = SubprocessActivityIndicator(
         enabled=True,
@@ -108,7 +108,7 @@ def test_hide_without_process_is_noop() -> None:
 def test_close_sends_exit_and_waits(monkeypatch) -> None:
     process = _FakeProcess()
     monkeypatch.setattr(
-        "moonshine_flow.activity_indicator.subprocess.Popen",
+        "ptarmigan_flow.activity_indicator.subprocess.Popen",
         lambda *_args, **_kwargs: process,
     )
 
@@ -152,8 +152,8 @@ def test_create_activity_indicator_returns_null_when_cocoa_unavailable(
     config = AppConfig()
     config.runtime.activity_indicator_enabled = True
 
-    monkeypatch.setattr("moonshine_flow.activity_indicator._cocoa_overlay_available", lambda: False)
-    monkeypatch.setattr("moonshine_flow.activity_indicator._OVERLAY_UNAVAILABLE_WARNED", False)
+    monkeypatch.setattr("ptarmigan_flow.activity_indicator._cocoa_overlay_available", lambda: False)
+    monkeypatch.setattr("ptarmigan_flow.activity_indicator._OVERLAY_UNAVAILABLE_WARNED", False)
     with caplog.at_level("WARNING"):
         first = create_activity_indicator(config)
         second = create_activity_indicator(config)
@@ -178,7 +178,7 @@ def test_create_activity_indicator_uses_runtime_bounds(monkeypatch) -> None:
     config.runtime.activity_indicator_margin_right = -3
     config.runtime.activity_indicator_margin_bottom = -4
 
-    monkeypatch.setattr("moonshine_flow.activity_indicator._cocoa_overlay_available", lambda: True)
+    monkeypatch.setattr("ptarmigan_flow.activity_indicator._cocoa_overlay_available", lambda: True)
     indicator = create_activity_indicator(config)
 
     assert isinstance(indicator, SubprocessActivityIndicator)

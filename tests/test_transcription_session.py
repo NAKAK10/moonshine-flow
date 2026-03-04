@@ -1,4 +1,4 @@
-from moonshine_flow.domain.transcription_session import append_only_delta
+from ptarmigan_flow.domain.transcription_session import append_only_delta
 
 
 def test_append_only_delta_appends_when_strict_prefix() -> None:

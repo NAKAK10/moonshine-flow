@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from moonshine_flow.hotkey_monitor import HotkeyMonitor
+from ptarmigan_flow.hotkey_monitor import HotkeyMonitor
 
 
 class _FakeListener:
@@ -19,7 +19,7 @@ class _FakeListener:
 
 
 def test_force_release_recovers_stuck_pressed_state(monkeypatch) -> None:
-    monkeypatch.setattr("moonshine_flow.hotkey_monitor.keyboard.Listener", _FakeListener)
+    monkeypatch.setattr("ptarmigan_flow.hotkey_monitor.keyboard.Listener", _FakeListener)
 
     pressed = 0
     released = 0
@@ -43,7 +43,7 @@ def test_force_release_recovers_stuck_pressed_state(monkeypatch) -> None:
 
 
 def test_stop_clears_pressed_state(monkeypatch) -> None:
-    monkeypatch.setattr("moonshine_flow.hotkey_monitor.keyboard.Listener", _FakeListener)
+    monkeypatch.setattr("ptarmigan_flow.hotkey_monitor.keyboard.Listener", _FakeListener)
 
     pressed = 0
 
@@ -61,7 +61,7 @@ def test_stop_clears_pressed_state(monkeypatch) -> None:
 
 
 def test_duplicate_press_recovers_missed_release(monkeypatch) -> None:
-    monkeypatch.setattr("moonshine_flow.hotkey_monitor.keyboard.Listener", _FakeListener)
+    monkeypatch.setattr("ptarmigan_flow.hotkey_monitor.keyboard.Listener", _FakeListener)
 
     pressed = 0
     released = 0
@@ -84,7 +84,7 @@ def test_duplicate_press_recovers_missed_release(monkeypatch) -> None:
 
 
 def test_is_pressed_reflects_hotkey_state(monkeypatch) -> None:
-    monkeypatch.setattr("moonshine_flow.hotkey_monitor.keyboard.Listener", _FakeListener)
+    monkeypatch.setattr("ptarmigan_flow.hotkey_monitor.keyboard.Listener", _FakeListener)
 
     monitor = HotkeyMonitor("a", on_press=lambda: None, on_release=lambda: None, max_hold_seconds=1.0)
     assert monitor.is_pressed() is False
@@ -97,7 +97,7 @@ def test_is_pressed_reflects_hotkey_state(monkeypatch) -> None:
 
 
 def test_is_pressed_prefers_physical_state_when_available(monkeypatch) -> None:
-    monkeypatch.setattr("moonshine_flow.hotkey_monitor.keyboard.Listener", _FakeListener)
+    monkeypatch.setattr("ptarmigan_flow.hotkey_monitor.keyboard.Listener", _FakeListener)
 
     monitor = HotkeyMonitor("a", on_press=lambda: None, on_release=lambda: None, max_hold_seconds=1.0)
     monitor._on_press(monitor._target_key)
@@ -109,7 +109,7 @@ def test_is_pressed_prefers_physical_state_when_available(monkeypatch) -> None:
 
 
 def test_is_pressed_ignores_physical_false(monkeypatch) -> None:
-    monkeypatch.setattr("moonshine_flow.hotkey_monitor.keyboard.Listener", _FakeListener)
+    monkeypatch.setattr("ptarmigan_flow.hotkey_monitor.keyboard.Listener", _FakeListener)
 
     monitor = HotkeyMonitor("a", on_press=lambda: None, on_release=lambda: None, max_hold_seconds=1.0)
     monitor._physical_pressed_state = lambda: False
@@ -119,7 +119,7 @@ def test_is_pressed_ignores_physical_false(monkeypatch) -> None:
 
 
 def test_on_press_accepts_event_even_when_physical_released(monkeypatch) -> None:
-    monkeypatch.setattr("moonshine_flow.hotkey_monitor.keyboard.Listener", _FakeListener)
+    monkeypatch.setattr("ptarmigan_flow.hotkey_monitor.keyboard.Listener", _FakeListener)
 
     pressed = 0
 

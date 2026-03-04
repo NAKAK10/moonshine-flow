@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
-from moonshine_flow.permissions import (
+from ptarmigan_flow.permissions import (
     _parse_permission_report_from_text,
     LaunchdPermissionProbe,
     PermissionReport,
@@ -18,7 +18,7 @@ from moonshine_flow.permissions import (
 
 def test_request_all_permissions_noop_when_already_granted(monkeypatch) -> None:
     granted = PermissionReport(microphone=True, accessibility=True, input_monitoring=True)
-    monkeypatch.setattr("moonshine_flow.permissions.check_all_permissions", lambda: granted)
+    monkeypatch.setattr("ptarmigan_flow.permissions.check_all_permissions", lambda: granted)
 
     result = request_all_permissions()
     assert result.all_granted
@@ -47,19 +47,19 @@ def test_request_all_permissions_requests_only_missing(monkeypatch) -> None:
         return True
 
     monkeypatch.setattr(
-        "moonshine_flow.permissions.check_all_permissions",
+        "ptarmigan_flow.permissions.check_all_permissions",
         fake_check_all_permissions,
     )
     monkeypatch.setattr(
-        "moonshine_flow.permissions.request_microphone_permission",
+        "ptarmigan_flow.permissions.request_microphone_permission",
         fake_request_mic,
     )
     monkeypatch.setattr(
-        "moonshine_flow.permissions.request_accessibility_permission",
+        "ptarmigan_flow.permissions.request_accessibility_permission",
         fake_request_ax,
     )
     monkeypatch.setattr(
-        "moonshine_flow.permissions.request_input_monitoring_permission",
+        "ptarmigan_flow.permissions.request_input_monitoring_permission",
         fake_request_im,
     )
 
@@ -80,19 +80,19 @@ def test_request_all_permissions_requests_accessibility_before_microphone(monkey
         return states.pop(0)
 
     monkeypatch.setattr(
-        "moonshine_flow.permissions.check_all_permissions",
+        "ptarmigan_flow.permissions.check_all_permissions",
         fake_check_all_permissions,
     )
     monkeypatch.setattr(
-        "moonshine_flow.permissions.request_microphone_permission",
+        "ptarmigan_flow.permissions.request_microphone_permission",
         lambda: order.append("mic") or True,
     )
     monkeypatch.setattr(
-        "moonshine_flow.permissions.request_accessibility_permission",
+        "ptarmigan_flow.permissions.request_accessibility_permission",
         lambda: order.append("ax") or True,
     )
     monkeypatch.setattr(
-        "moonshine_flow.permissions.request_input_monitoring_permission",
+        "ptarmigan_flow.permissions.request_input_monitoring_permission",
         lambda: order.append("im") or True,
     )
 
@@ -103,7 +103,7 @@ def test_request_all_permissions_requests_accessibility_before_microphone(monkey
 
 
 def test_check_accessibility_permission_uses_application_services(monkeypatch) -> None:
-    monkeypatch.setattr("moonshine_flow.permissions._is_macos", lambda: True)
+    monkeypatch.setattr("ptarmigan_flow.permissions._is_macos", lambda: True)
     monkeypatch.setitem(
         sys.modules,
         "ApplicationServices",
@@ -114,7 +114,7 @@ def test_check_accessibility_permission_uses_application_services(monkeypatch) -
 
 
 def test_request_accessibility_permission_prompts_via_application_services(monkeypatch) -> None:
-    monkeypatch.setattr("moonshine_flow.permissions._is_macos", lambda: True)
+    monkeypatch.setattr("ptarmigan_flow.permissions._is_macos", lambda: True)
     calls = {"count": 0}
 
     def fake_trusted() -> bool:
@@ -156,7 +156,7 @@ def test_format_permission_guidance_includes_preferred_target_and_launchd_hint(m
         "executable",
         "/opt/homebrew/Cellar/python@3.11/3.11.14_3/Frameworks/Python.framework/Versions/3.11/bin/python3.11",
     )
-    monkeypatch.setenv("XPC_SERVICE_NAME", "com.moonshineflow.daemon")
+    monkeypatch.setenv("XPC_SERVICE_NAME", "com.ptarmiganflow.daemon")
     report = PermissionReport(microphone=False, accessibility=False, input_monitoring=False)
 
     guidance = format_permission_guidance(report)
@@ -167,7 +167,7 @@ def test_format_permission_guidance_includes_preferred_target_and_launchd_hint(m
         in guidance
     )
     assert "enable the preferred target above" in guidance
-    assert "Detected launchd context: com.moonshineflow.daemon" in guidance
+    assert "Detected launchd context: com.ptarmiganflow.daemon" in guidance
 
 
 def test_recommended_permission_target_falls_back_to_executable(monkeypatch) -> None:
@@ -205,10 +205,10 @@ def test_parse_permission_report_from_text_returns_none_when_incomplete() -> Non
 
 def test_check_permissions_in_launchd_context_short_circuits_on_non_macos(monkeypatch) -> None:
     expected = PermissionReport(microphone=True, accessibility=True, input_monitoring=True)
-    monkeypatch.setattr("moonshine_flow.permissions._is_macos", lambda: False)
-    monkeypatch.setattr("moonshine_flow.permissions.check_all_permissions", lambda: expected)
+    monkeypatch.setattr("ptarmigan_flow.permissions._is_macos", lambda: False)
+    monkeypatch.setattr("ptarmigan_flow.permissions.check_all_permissions", lambda: expected)
     monkeypatch.setattr(
-        "moonshine_flow.permissions.subprocess.run",
+        "ptarmigan_flow.permissions.subprocess.run",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("subprocess should not run")),
     )
 
@@ -216,14 +216,14 @@ def test_check_permissions_in_launchd_context_short_circuits_on_non_macos(monkey
 
     assert probe == LaunchdPermissionProbe(
         ok=True,
-        command=["mflow", "check-permissions"],
+        command=["pflow", "check-permissions"],
         report=expected,
     )
 
 
 def test_check_permissions_in_launchd_context_parses_permission_output(monkeypatch) -> None:
-    monkeypatch.setattr("moonshine_flow.permissions._is_macos", lambda: True)
-    monkeypatch.setattr("moonshine_flow.permissions.os.getuid", lambda: 501)
+    monkeypatch.setattr("ptarmigan_flow.permissions._is_macos", lambda: True)
+    monkeypatch.setattr("ptarmigan_flow.permissions.os.getuid", lambda: 501)
 
     called: dict[str, object] = {}
 
@@ -244,13 +244,13 @@ def test_check_permissions_in_launchd_context_parses_permission_output(monkeypat
             stderr="",
         )
 
-    monkeypatch.setattr("moonshine_flow.permissions.subprocess.run", fake_run)
+    monkeypatch.setattr("ptarmigan_flow.permissions.subprocess.run", fake_run)
 
-    probe = check_permissions_in_launchd_context(command=["mflow", "check-permissions"])
+    probe = check_permissions_in_launchd_context(command=["pflow", "check-permissions"])
 
-    assert called["command"] == ["launchctl", "asuser", "501", "mflow", "check-permissions"]
+    assert called["command"] == ["launchctl", "asuser", "501", "pflow", "check-permissions"]
     assert probe.ok is True
-    assert probe.command == ["mflow", "check-permissions"]
+    assert probe.command == ["pflow", "check-permissions"]
     assert probe.report == PermissionReport(
         microphone=False,
         accessibility=True,
@@ -259,10 +259,10 @@ def test_check_permissions_in_launchd_context_parses_permission_output(monkeypat
 
 
 def test_check_permissions_in_launchd_context_reports_parse_error(monkeypatch) -> None:
-    monkeypatch.setattr("moonshine_flow.permissions._is_macos", lambda: True)
-    monkeypatch.setattr("moonshine_flow.permissions.os.getuid", lambda: 501)
+    monkeypatch.setattr("ptarmigan_flow.permissions._is_macos", lambda: True)
+    monkeypatch.setattr("ptarmigan_flow.permissions.os.getuid", lambda: 501)
     monkeypatch.setattr(
-        "moonshine_flow.permissions.subprocess.run",
+        "ptarmigan_flow.permissions.subprocess.run",
         lambda *args, **kwargs: SimpleNamespace(
             returncode=1,
             stdout="unexpected output",
@@ -276,15 +276,15 @@ def test_check_permissions_in_launchd_context_reports_parse_error(monkeypatch) -
     assert probe.report is None
     assert probe.error is not None
     assert "Could not parse permission status" in probe.error
-    assert "command=mflow check-permissions" in probe.error
-    assert probe.command == ["mflow", "check-permissions"]
+    assert "command=pflow check-permissions" in probe.error
+    assert probe.command == ["pflow", "check-permissions"]
     assert probe.stdout == "unexpected output"
     assert probe.stderr == "trace"
 
 
 def test_reset_app_bundle_tcc_calls_tccutil_for_both_services(monkeypatch) -> None:
     """reset_app_bundle_tcc must invoke tccutil for Accessibility and ListenEvent."""
-    import moonshine_flow.permissions as perms_mod
+    import ptarmigan_flow.permissions as perms_mod
 
     monkeypatch.setattr(perms_mod.shutil, "which", lambda cmd: f"/usr/bin/{cmd}")
 
@@ -307,7 +307,7 @@ def test_reset_app_bundle_tcc_calls_tccutil_for_both_services(monkeypatch) -> No
 
 def test_reset_app_bundle_tcc_returns_false_when_tccutil_missing(monkeypatch) -> None:
     """reset_app_bundle_tcc returns False when tccutil is not on PATH."""
-    import moonshine_flow.permissions as perms_mod
+    import ptarmigan_flow.permissions as perms_mod
 
     monkeypatch.setattr(perms_mod.shutil, "which", lambda _cmd: None)
 
@@ -318,7 +318,7 @@ def test_reset_app_bundle_tcc_returns_false_when_tccutil_missing(monkeypatch) ->
 
 def test_reset_app_bundle_tcc_returns_false_when_all_calls_fail(monkeypatch) -> None:
     """reset_app_bundle_tcc returns False when every tccutil call exits non-zero."""
-    import moonshine_flow.permissions as perms_mod
+    import ptarmigan_flow.permissions as perms_mod
 
     monkeypatch.setattr(perms_mod.shutil, "which", lambda cmd: f"/usr/bin/{cmd}")
     monkeypatch.setattr(

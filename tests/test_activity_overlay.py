@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import moonshine_flow.activity_overlay as overlay_module
+import ptarmigan_flow.activity_overlay as overlay_module
 
 
 class _FakeWindow:

@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from moonshine_flow.config import AppConfig, load_config, write_example_config
+from ptarmigan_flow.config import AppConfig, load_config, write_example_config
 
 
 def test_write_example_and_load_config(tmp_path: Path) -> None:

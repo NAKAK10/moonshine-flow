@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from moonshine_flow.stt.vllm_realtime import VLLMRealtimeBackendSettings, VLLMRealtimeSTTBackend
+from ptarmigan_flow.stt.vllm_realtime import VLLMRealtimeBackendSettings, VLLMRealtimeSTTBackend
 
 
 class _FakeServerManager:

@@ -4,7 +4,7 @@ import os
 import plistlib
 from pathlib import Path
 
-from moonshine_flow import app_bundle
+from ptarmigan_flow import app_bundle
 
 
 def _write_executable(path: Path, content: bytes = b"#!/bin/sh\nexit 0\n") -> None:
@@ -23,12 +23,12 @@ def test_launch_agent_prefix_from_env_returns_none_without_env(monkeypatch) -> N
     ):
         monkeypatch.delenv(key, raising=False)
 
-    prefix = app_bundle.launch_agent_prefix_from_env(executable_path=Path("/tmp/MoonshineFlow"))
+    prefix = app_bundle.launch_agent_prefix_from_env(executable_path=Path("/tmp/PtarmiganFlow"))
     assert prefix is None
 
 
 def test_install_app_bundle_from_env_creates_bundle(tmp_path: Path, monkeypatch) -> None:
-    bootstrap_script = tmp_path / "libexec" / "src" / "moonshine_flow" / "homebrew_bootstrap.py"
+    bootstrap_script = tmp_path / "libexec" / "src" / "ptarmigan_flow" / "homebrew_bootstrap.py"
     bootstrap_script.parent.mkdir(parents=True, exist_ok=True)
     bootstrap_script.write_text("print('ok')\n", encoding="utf-8")
     python_bin = tmp_path / "python3.11"
@@ -60,7 +60,7 @@ def test_resolve_launch_agent_app_command_uses_default_bundle_path(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    bootstrap_script = tmp_path / "libexec" / "src" / "moonshine_flow" / "homebrew_bootstrap.py"
+    bootstrap_script = tmp_path / "libexec" / "src" / "ptarmigan_flow" / "homebrew_bootstrap.py"
     bootstrap_script.parent.mkdir(parents=True, exist_ok=True)
     bootstrap_script.write_text("print('ok')\n", encoding="utf-8")
     python_bin = tmp_path / "python3.11"
@@ -78,7 +78,7 @@ def test_resolve_launch_agent_app_command_uses_default_bundle_path(
     command = app_bundle.resolve_launch_agent_app_command()
 
     assert command is not None
-    assert command[0].endswith("/Applications/MoonshineFlow.app/Contents/MacOS/MoonshineFlow")
+    assert command[0].endswith("/Applications/PtarmiganFlow.app/Contents/MacOS/PtarmiganFlow")
     assert command[1] == str(bootstrap_script)
     assert command[-1] == "--"
 
@@ -115,7 +115,7 @@ def test_resolve_real_python_binary_falls_back_when_python_app_missing(tmp_path:
 
 def _make_bundle_env(tmp_path: Path, monkeypatch, *, python_content: bytes = b"pythonbin-v1") -> Path:
     """Set up env vars and file fixtures for install_app_bundle_from_env tests."""
-    bootstrap_script = tmp_path / "libexec" / "src" / "moonshine_flow" / "homebrew_bootstrap.py"
+    bootstrap_script = tmp_path / "libexec" / "src" / "ptarmigan_flow" / "homebrew_bootstrap.py"
     bootstrap_script.parent.mkdir(parents=True, exist_ok=True)
     bootstrap_script.write_text("print('ok')\n", encoding="utf-8")
     python_bin = tmp_path / "python3.11"

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from moonshine_flow.transcription_corrections import (
+from ptarmigan_flow.transcription_corrections import (
     CorrectionDictionaryError,
     default_dictionary_path,
     load_corrections_dictionary,
@@ -35,7 +35,7 @@ def test_load_missing_explicit_dictionary_warns_and_continues(tmp_path: Path) ->
 
 def test_load_invalid_toml_reports_line_and_column(tmp_path: Path) -> None:
     path = tmp_path / "dictionary.toml"
-    path.write_text("[exact]\n\"Moonshine Flow\" = [\"a\"\n", encoding="utf-8")
+    path.write_text("[exact]\n\"Ptarmigan Flow\" = [\"a\"\n", encoding="utf-8")
 
     with pytest.raises(CorrectionDictionaryError) as exc_info:
         load_corrections_dictionary(path, explicitly_configured=False)
@@ -50,10 +50,10 @@ def test_apply_exact_and_regex_rules(tmp_path: Path) -> None:
     path.write_text(
         """
 [exact]
-"Moonshine Flow" = ["むーんしゃいんふろー", "むーんしゃいんふ"]
+"Ptarmigan Flow" = ["ぷたーみがんふろー", "ぷたーみがんふ"]
 
 [regex]
-"Moonshine Flow" = ["むーんしゃいんふ(ろー)?"]
+"Ptarmigan Flow" = ["ぷたーみがんふ(ろー)?"]
 "GPT" = ["(?i)じーぴーてぃー"]
 """.strip(),
         encoding="utf-8",
@@ -62,8 +62,8 @@ def test_apply_exact_and_regex_rules(tmp_path: Path) -> None:
     result = load_corrections_dictionary(path, explicitly_configured=False)
 
     assert result.loaded is True
-    assert result.rules.apply("むーんしゃいんふ") == "Moonshine Flow"
-    assert result.rules.apply("これは むーんしゃいんふろー です") == "これはMoonshine Flowです"
+    assert result.rules.apply("ぷたーみがんふ") == "Ptarmigan Flow"
+    assert result.rules.apply("これは ぷたーみがんふろー です") == "これはPtarmigan Flowです"
     assert result.rules.apply("じーぴーてぃー") == "GPT"
 
 
@@ -72,7 +72,7 @@ def test_invalid_regex_is_disabled_with_warning(tmp_path: Path) -> None:
     path.write_text(
         """
 [regex]
-"Moonshine Flow" = ["(invalid"]
+"Ptarmigan Flow" = ["(invalid"]
 """.strip(),
         encoding="utf-8",
     )

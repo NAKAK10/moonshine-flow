@@ -1,7 +1,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 
-from moonshine_flow import launchd
+from ptarmigan_flow import launchd
 
 
 def test_build_launch_agent_prefers_app_bundle_command_when_available(monkeypatch) -> None:
@@ -9,12 +9,12 @@ def test_build_launch_agent_prefers_app_bundle_command_when_available(monkeypatc
         launchd,
         "resolve_launch_agent_app_command",
         lambda: [
-            "/tmp/Applications/MoonshineFlow.app/Contents/MacOS/MoonshineFlow",
-            "/tmp/libexec/src/moonshine_flow/homebrew_bootstrap.py",
+            "/tmp/Applications/PtarmiganFlow.app/Contents/MacOS/PtarmiganFlow",
+            "/tmp/libexec/src/ptarmigan_flow/homebrew_bootstrap.py",
             "--libexec",
             "/tmp/libexec",
             "--var-dir",
-            "/tmp/var/moonshine-flow",
+            "/tmp/var/ptarmigan-flow",
             "--python",
             "/tmp/python3.11",
             "--uv",
@@ -26,12 +26,12 @@ def test_build_launch_agent_prefers_app_bundle_command_when_available(monkeypatc
     payload = launchd.build_launch_agent(Path("/tmp/config.toml"))
 
     assert payload["ProgramArguments"] == [
-        "/tmp/Applications/MoonshineFlow.app/Contents/MacOS/MoonshineFlow",
-        "/tmp/libexec/src/moonshine_flow/homebrew_bootstrap.py",
+        "/tmp/Applications/PtarmiganFlow.app/Contents/MacOS/PtarmiganFlow",
+        "/tmp/libexec/src/ptarmigan_flow/homebrew_bootstrap.py",
         "--libexec",
         "/tmp/libexec",
         "--var-dir",
-        "/tmp/var/moonshine-flow",
+        "/tmp/var/ptarmigan-flow",
         "--python",
         "/tmp/python3.11",
         "--uv",
@@ -50,12 +50,12 @@ def test_resolve_launch_agent_program_prefix_prefers_app_bundle_when_available(
         launchd,
         "resolve_launch_agent_app_command",
         lambda: [
-            "/tmp/Applications/MoonshineFlow.app/Contents/MacOS/MoonshineFlow",
-            "/tmp/libexec/src/moonshine_flow/homebrew_bootstrap.py",
+            "/tmp/Applications/PtarmiganFlow.app/Contents/MacOS/PtarmiganFlow",
+            "/tmp/libexec/src/ptarmigan_flow/homebrew_bootstrap.py",
             "--libexec",
             "/tmp/libexec",
             "--var-dir",
-            "/tmp/var/moonshine-flow",
+            "/tmp/var/ptarmigan-flow",
             "--python",
             "/tmp/python3.11",
             "--uv",
@@ -67,12 +67,12 @@ def test_resolve_launch_agent_program_prefix_prefers_app_bundle_when_available(
     prefix = launchd.resolve_launch_agent_program_prefix()
 
     assert prefix == [
-        "/tmp/Applications/MoonshineFlow.app/Contents/MacOS/MoonshineFlow",
-        "/tmp/libexec/src/moonshine_flow/homebrew_bootstrap.py",
+        "/tmp/Applications/PtarmiganFlow.app/Contents/MacOS/PtarmiganFlow",
+        "/tmp/libexec/src/ptarmigan_flow/homebrew_bootstrap.py",
         "--libexec",
         "/tmp/libexec",
         "--var-dir",
-        "/tmp/var/moonshine-flow",
+        "/tmp/var/ptarmigan-flow",
         "--python",
         "/tmp/python3.11",
         "--uv",
@@ -81,50 +81,50 @@ def test_resolve_launch_agent_program_prefix_prefers_app_bundle_when_available(
     ]
 
 
-def test_resolve_launch_agent_program_prefix_falls_back_to_mflow(monkeypatch) -> None:
+def test_resolve_launch_agent_program_prefix_falls_back_to_pflow(monkeypatch) -> None:
     monkeypatch.setattr(launchd, "resolve_launch_agent_app_command", lambda: None)
     monkeypatch.setattr(
         launchd.shutil,
         "which",
-        lambda name: "/usr/local/bin/mflow" if name == "mflow" else None,
+        lambda name: "/usr/local/bin/pflow" if name == "pflow" else None,
     )
 
     prefix = launchd.resolve_launch_agent_program_prefix()
 
-    assert prefix == ["/usr/local/bin/mflow"]
+    assert prefix == ["/usr/local/bin/pflow"]
 
 
-def test_build_launch_agent_prefers_mflow_command(monkeypatch) -> None:
+def test_build_launch_agent_prefers_pflow_command(monkeypatch) -> None:
     monkeypatch.setattr(launchd, "resolve_launch_agent_app_command", lambda: None)
     monkeypatch.setattr(
         launchd.shutil,
         "which",
-        lambda name: "/usr/local/bin/mflow" if name == "mflow" else None,
+        lambda name: "/usr/local/bin/pflow" if name == "pflow" else None,
     )
 
     payload = launchd.build_launch_agent(Path("/tmp/config.toml"))
 
     assert payload["ProcessType"] == "Interactive"
     assert payload["ProgramArguments"] == [
-        "/usr/local/bin/mflow",
+        "/usr/local/bin/pflow",
         "run",
         "--config",
         "/tmp/config.toml",
     ]
 
 
-def test_build_launch_agent_uses_moonshine_flow_when_mflow_missing(monkeypatch) -> None:
+def test_build_launch_agent_uses_ptarmigan_flow_when_pflow_missing(monkeypatch) -> None:
     monkeypatch.setattr(launchd, "resolve_launch_agent_app_command", lambda: None)
     monkeypatch.setattr(
         launchd.shutil,
         "which",
-        lambda name: "/usr/local/bin/moonshine-flow" if name == "moonshine-flow" else None,
+        lambda name: "/usr/local/bin/ptarmigan-flow" if name == "ptarmigan-flow" else None,
     )
 
     payload = launchd.build_launch_agent(Path("/tmp/config.toml"))
 
     assert payload["ProgramArguments"] == [
-        "/usr/local/bin/moonshine-flow",
+        "/usr/local/bin/ptarmigan-flow",
         "run",
         "--config",
         "/tmp/config.toml",
@@ -141,7 +141,7 @@ def test_build_launch_agent_falls_back_to_python_module(monkeypatch) -> None:
     assert payload["ProgramArguments"] == [
         "/opt/python/bin/python3.11",
         "-m",
-        "moonshine_flow.cli",
+        "ptarmigan_flow.cli",
         "run",
         "--config",
         "/tmp/config.toml",
@@ -153,12 +153,12 @@ def test_build_launch_agent_includes_llm_enabled_override(monkeypatch) -> None:
     monkeypatch.setattr(
         launchd.shutil,
         "which",
-        lambda name: "/usr/local/bin/mflow" if name == "mflow" else None,
+        lambda name: "/usr/local/bin/pflow" if name == "pflow" else None,
     )
 
     payload = launchd.build_launch_agent(Path("/tmp/config.toml"), llm_enabled_override=True)
 
-    assert payload["EnvironmentVariables"] == {"MFLOW_LLM_ENABLED": "1"}
+    assert payload["EnvironmentVariables"] == {"PFLOW_LLM_ENABLED": "1"}
 
 
 def test_restart_launch_agent_returns_false_when_plist_missing(monkeypatch) -> None:
@@ -168,7 +168,7 @@ def test_restart_launch_agent_returns_false_when_plist_missing(monkeypatch) -> N
 
 
 def test_restart_launch_agent_uses_kickstart_when_available(monkeypatch, tmp_path: Path) -> None:
-    plist = tmp_path / "com.moonshineflow.daemon.plist"
+    plist = tmp_path / "com.ptarmiganflow.daemon.plist"
     plist.write_text("plist", encoding="utf-8")
     monkeypatch.setattr(launchd, "launch_agent_path", lambda: plist)
     marker_path = tmp_path / "restart-suppression.json"
@@ -187,17 +187,17 @@ def test_restart_launch_agent_uses_kickstart_when_available(monkeypatch, tmp_pat
     monkeypatch.setattr(launchd, "_launchctl", fake_launchctl)
 
     assert launchd.restart_launch_agent() is True
-    assert calls == [("kickstart", "-k", "gui/501/com.moonshineflow.daemon")]
+    assert calls == [("kickstart", "-k", "gui/501/com.ptarmiganflow.daemon")]
     assert marker_path.exists()
 
 
 def test_restart_launch_agent_persists_llm_override(monkeypatch, tmp_path: Path) -> None:
-    plist = tmp_path / "com.moonshineflow.daemon.plist"
+    plist = tmp_path / "com.ptarmiganflow.daemon.plist"
     plist.write_bytes(
         launchd.plistlib.dumps(
             {
-                "Label": "com.moonshineflow.daemon",
-                "ProgramArguments": ["/usr/local/bin/mflow", "run"],
+                "Label": "com.ptarmiganflow.daemon",
+                "ProgramArguments": ["/usr/local/bin/pflow", "run"],
             }
         )
     )
@@ -217,11 +217,11 @@ def test_restart_launch_agent_persists_llm_override(monkeypatch, tmp_path: Path)
 
     assert launchd.restart_launch_agent(llm_enabled_override=False) is True
     payload = launchd.plistlib.loads(plist.read_bytes())
-    assert payload["EnvironmentVariables"]["MFLOW_LLM_ENABLED"] == "0"
+    assert payload["EnvironmentVariables"]["PFLOW_LLM_ENABLED"] == "0"
 
 
 def test_restart_launch_agent_falls_back_to_bootstrap(monkeypatch, tmp_path: Path) -> None:
-    plist = tmp_path / "com.moonshineflow.daemon.plist"
+    plist = tmp_path / "com.ptarmiganflow.daemon.plist"
     plist.write_text("plist", encoding="utf-8")
     monkeypatch.setattr(launchd, "launch_agent_path", lambda: plist)
     marker_path = tmp_path / "restart-suppression.json"
@@ -243,7 +243,7 @@ def test_restart_launch_agent_falls_back_to_bootstrap(monkeypatch, tmp_path: Pat
 
     assert launchd.restart_launch_agent() is True
     assert calls == [
-        ("kickstart", "-k", "gui/501/com.moonshineflow.daemon"),
+        ("kickstart", "-k", "gui/501/com.ptarmiganflow.daemon"),
         ("bootout", "gui/501", str(plist)),
         ("bootstrap", "gui/501", str(plist)),
     ]
@@ -251,7 +251,7 @@ def test_restart_launch_agent_falls_back_to_bootstrap(monkeypatch, tmp_path: Pat
 
 
 def test_restart_launch_agent_raises_when_bootstrap_fails(monkeypatch, tmp_path: Path) -> None:
-    plist = tmp_path / "com.moonshineflow.daemon.plist"
+    plist = tmp_path / "com.ptarmiganflow.daemon.plist"
     plist.write_text("plist", encoding="utf-8")
     monkeypatch.setattr(launchd, "launch_agent_path", lambda: plist)
     marker_path = tmp_path / "restart-suppression.json"

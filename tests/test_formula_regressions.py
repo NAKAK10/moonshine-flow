@@ -4,7 +4,7 @@ from pathlib import Path
 
 
 def test_formula_does_not_reinstall_moved_project_files() -> None:
-    formula_path = Path(__file__).resolve().parents[1] / "Formula" / "moonshine-flow.rb"
+    formula_path = Path(__file__).resolve().parents[1] / "Formula" / "ptarmigan-flow.rb"
     content = formula_path.read_text(encoding="utf-8")
 
     assert 'libexec.install buildpath.children' in content
@@ -16,15 +16,15 @@ def test_formula_does_not_reinstall_moved_project_files() -> None:
 
 
 def test_formula_sets_setuptools_scm_version_for_stable_builds() -> None:
-    formula_path = Path(__file__).resolve().parents[1] / "Formula" / "moonshine-flow.rb"
+    formula_path = Path(__file__).resolve().parents[1] / "Formula" / "ptarmigan-flow.rb"
     content = formula_path.read_text(encoding="utf-8")
 
-    assert "SETUPTOOLS_SCM_PRETEND_VERSION_FOR_MOONSHINE_FLOW" in content
+    assert "SETUPTOOLS_SCM_PRETEND_VERSION_FOR_PTARMIGAN_FLOW" in content
 
 
-def test_formula_installs_mflow_alias_wrapper() -> None:
-    formula_path = Path(__file__).resolve().parents[1] / "Formula" / "moonshine-flow.rb"
+def test_formula_installs_pflow_alias_wrapper() -> None:
+    formula_path = Path(__file__).resolve().parents[1] / "Formula" / "ptarmigan-flow.rb"
     content = formula_path.read_text(encoding="utf-8")
 
-    assert "%w[moonshine-flow mflow].each do |command_name|" in content
-    assert 'shell_output("#{bin}/mflow --help")' in content
+    assert "%w[ptarmigan-flow pflow].each do |command_name|" in content
+    assert 'shell_output("#{bin}/pflow --help")' in content

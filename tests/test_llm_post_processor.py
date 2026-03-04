@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import moonshine_flow.text_processing.llm as llm_module
-from moonshine_flow.text_processing.llm import (
+import ptarmigan_flow.text_processing.llm as llm_module
+from ptarmigan_flow.text_processing.llm import (
     LLMClientError,
     LLMCorrectionSettings,
     LLMPostProcessor,
