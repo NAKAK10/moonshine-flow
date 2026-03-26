@@ -42,6 +42,7 @@ class AudioRecorder:
 
         self._lock = threading.Lock()
         self._frames: list[np.ndarray] = []
+        self._recorded_frames = 0
         self._stream: sd.InputStream | None = None
         self._recording = False
         self._max_frames = self.sample_rate * self.max_record_seconds
@@ -107,19 +108,115 @@ class AudioRecorder:
             except Exception:
                 LOGGER.debug("Stream close failed", exc_info=True)
 
-    def _resolve_input_device(self) -> int | str | None:
+    @staticmethod
+    def _default_input_index() -> int | None:
+        try:
+            default_device = getattr(sd, "default", None)
+            default_pair = getattr(default_device, "device", None)
+            if isinstance(default_pair, (list, tuple)) and default_pair:
+                default_index = int(default_pair[0])
+                if default_index >= 0:
+                    return default_index
+        except Exception:
+            return None
+        return None
+
+    def _query_input_devices(self) -> tuple[list[Any], int | None] | None:
+        try:
+            return list(sd.query_devices()), self._default_input_index()
+        except Exception:
+            LOGGER.debug("Failed to query audio devices; using system default input", exc_info=True)
+            return None
+
+    def _configured_input_device_fallback_label(self) -> str:
+        if self.input_device_policy == "playback_friendly":
+            return "playback-friendly input selection"
+        if self.input_device_policy == "external_preferred":
+            return "external-preferred input selection"
+        return "system default input"
+
+    def _warn_configured_input_device_query_failed(self) -> None:
+        configured = self.input_device
+        fallback = self._configured_input_device_fallback_label()
+        if isinstance(configured, str):
+            LOGGER.warning(
+                "Configured input device '%s' could not be resolved because audio device query failed; "
+                "falling back to %s",
+                configured,
+                fallback,
+            )
+            return
+        if isinstance(configured, int):
+            LOGGER.warning(
+                "Configured input device index %s could not be resolved because audio device query failed; "
+                "falling back to %s",
+                configured,
+                fallback,
+            )
+            return
+        LOGGER.warning(
+            "Configured input device %r could not be resolved because audio device query failed; "
+            "falling back to %s",
+            configured,
+            fallback,
+        )
+
+    def _resolve_configured_input_device(self, devices: list[Any]) -> int | None:
+        configured = self.input_device
+        if configured is None:
+            return None
+
+        if isinstance(configured, str):
+            wanted_name = configured.strip()
+            for index, device in enumerate(devices):
+                if not self._is_input_device(device):
+                    continue
+                name = str(self._device_get(device, "name", f"Device {index}")).strip()
+                if name == wanted_name:
+                    return index
+            LOGGER.warning(
+                "Configured input device '%s' is unavailable; falling back to %s",
+                configured,
+                self._configured_input_device_fallback_label(),
+            )
+            return None
+
+        if isinstance(configured, int):
+            if 0 <= configured < len(devices) and self._is_input_device(devices[configured]):
+                return configured
+            LOGGER.warning(
+                "Configured input device index %s is unavailable; falling back to %s",
+                configured,
+                self._configured_input_device_fallback_label(),
+            )
+            return None
+
+        LOGGER.warning(
+            "Configured input device %r is unsupported; falling back to %s",
+            configured,
+            self._configured_input_device_fallback_label(),
+        )
+        return None
+
+    def _resolve_input_device(self) -> int | None:
+        device_query = self._query_input_devices()
+
         if self.input_device is not None:
-            return self.input_device
+            if device_query is None:
+                self._warn_configured_input_device_query_failed()
+                return None
+            devices, default_input_index = device_query
+            del default_input_index
+            resolved_configured = self._resolve_configured_input_device(devices)
+            if resolved_configured is not None:
+                return resolved_configured
 
         if self.input_device_policy == "system_default":
             return None
 
-        try:
-            devices = sd.query_devices()
-            default_input_index = int(sd.default.device[0])
-        except Exception:
-            LOGGER.debug("Failed to query audio devices; using system default input", exc_info=True)
+        if device_query is None:
             return None
+        devices, default_input_index = device_query
 
         if self.input_device_policy == "external_preferred":
             for index, device in enumerate(devices):
@@ -132,7 +229,7 @@ class AudioRecorder:
 
         if self.input_device_policy == "playback_friendly":
             default_input = None
-            if 0 <= default_input_index < len(devices):
+            if default_input_index is not None and 0 <= default_input_index < len(devices):
                 default_input = devices[default_input_index]
             if default_input is not None and not self._is_likely_bluetooth_input(default_input):
                 return None
@@ -203,8 +300,8 @@ class AudioRecorder:
             if not self._recording:
                 return
             self._frames.append(indata.copy())
-            total = sum(chunk.shape[0] for chunk in self._frames)
-            if total >= self._max_frames:
+            self._recorded_frames += int(frames)
+            if self._recorded_frames >= self._max_frames:
                 LOGGER.warning("Reached max recording duration (%ss)", self.max_record_seconds)
                 self._recording = False
                 raise sd.CallbackStop
@@ -215,6 +312,7 @@ class AudioRecorder:
             if self._recording:
                 return
             self._frames = []
+            self._recorded_frames = 0
             self._recording = True
 
         try:
@@ -233,9 +331,11 @@ class AudioRecorder:
         with self._lock:
             self._recording = False
             if not self._frames:
+                self._recorded_frames = 0
                 return np.empty((0, self.channels), dtype=self.dtype)
             merged = np.concatenate(self._frames, axis=0)
             self._frames = []
+            self._recorded_frames = 0
 
         LOGGER.debug("Audio recording stopped: %d samples", merged.shape[0])
         return merged
@@ -252,6 +352,7 @@ class AudioRecorder:
         with self._lock:
             self._recording = False
             self._frames = []
+            self._recorded_frames = 0
 
         if self._stream is None:
             return

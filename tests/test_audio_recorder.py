@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 import pytest
 
@@ -86,9 +88,20 @@ def test_recorder_opens_and_closes_per_recording(monkeypatch) -> None:
     assert _FakeStream.closed == 2
 
 
-def test_recorder_passes_input_device_when_configured(monkeypatch) -> None:
+def test_recorder_resolves_configured_input_device_name_to_current_index(monkeypatch) -> None:
     _reset_fake_stream()
     monkeypatch.setattr("ptarmigan_flow.audio_recorder.sd.InputStream", _FakeStream)
+    monkeypatch.setattr(
+        "ptarmigan_flow.audio_recorder.sd.query_devices",
+        lambda: [
+            {"name": "Built-in Output", "max_input_channels": 0},
+            {"name": "MacBook Air Microphone", "max_input_channels": 1},
+        ],
+    )
+    monkeypatch.setattr(
+        "ptarmigan_flow.audio_recorder.sd.default",
+        type("DefaultDevice", (), {"device": (1, 1)})(),
+    )
 
     recorder = AudioRecorder(
         sample_rate=16000,
@@ -106,7 +119,133 @@ def test_recorder_passes_input_device_when_configured(monkeypatch) -> None:
     assert _FakeStream.stopped == 1
     assert _FakeStream.closed == 1
     assert _FakeStream.last_kwargs is not None
-    assert _FakeStream.last_kwargs["device"] == "MacBook Air Microphone"
+    assert _FakeStream.last_kwargs["device"] == 1
+
+
+def test_missing_configured_input_device_name_falls_back_to_policy(monkeypatch, caplog) -> None:
+    _reset_fake_stream()
+    monkeypatch.setattr("ptarmigan_flow.audio_recorder.sd.InputStream", _FakeStream)
+    monkeypatch.setattr(
+        "ptarmigan_flow.audio_recorder.sd.query_devices",
+        lambda: [
+            {"name": "MacBook Air Microphone", "max_input_channels": 1},
+            {"name": "Keiju's AirPods", "max_input_channels": 1},
+        ],
+    )
+    monkeypatch.setattr(
+        "ptarmigan_flow.audio_recorder.sd.default",
+        type("DefaultDevice", (), {"device": (1, 1)})(),
+    )
+
+    recorder = AudioRecorder(
+        sample_rate=16000,
+        channels=1,
+        dtype="float32",
+        max_record_seconds=30,
+        input_device="Missing Microphone",
+        input_device_policy="playback_friendly",
+    )
+
+    with caplog.at_level(logging.WARNING):
+        recorder.start()
+        recorder.stop()
+
+    assert _FakeStream.last_kwargs is not None
+    assert _FakeStream.last_kwargs["device"] == 0
+    assert "Configured input device 'Missing Microphone' is unavailable" in caplog.text
+
+
+def test_invalid_legacy_numeric_input_device_falls_back_to_policy(monkeypatch, caplog) -> None:
+    _reset_fake_stream()
+    monkeypatch.setattr("ptarmigan_flow.audio_recorder.sd.InputStream", _FakeStream)
+    monkeypatch.setattr(
+        "ptarmigan_flow.audio_recorder.sd.query_devices",
+        lambda: [
+            {"name": "MacBook Air Microphone", "max_input_channels": 1},
+            {"name": "USB Desk Mic", "max_input_channels": 1},
+        ],
+    )
+    monkeypatch.setattr(
+        "ptarmigan_flow.audio_recorder.sd.default",
+        type("DefaultDevice", (), {"device": (0, 0)})(),
+    )
+
+    recorder = AudioRecorder(
+        sample_rate=16000,
+        channels=1,
+        dtype="float32",
+        max_record_seconds=30,
+        input_device=7,
+        input_device_policy="external_preferred",
+    )
+
+    with caplog.at_level(logging.WARNING):
+        recorder.start()
+        recorder.stop()
+
+    assert _FakeStream.last_kwargs is not None
+    assert _FakeStream.last_kwargs["device"] == 1
+    assert "Configured input device index 7 is unavailable" in caplog.text
+
+
+def test_configured_input_device_name_warns_when_query_fails(monkeypatch, caplog) -> None:
+    _reset_fake_stream()
+    monkeypatch.setattr("ptarmigan_flow.audio_recorder.sd.InputStream", _FakeStream)
+    monkeypatch.setattr(
+        "ptarmigan_flow.audio_recorder.sd.query_devices",
+        lambda: (_ for _ in ()).throw(RuntimeError("query failed")),
+    )
+
+    recorder = AudioRecorder(
+        sample_rate=16000,
+        channels=1,
+        dtype="float32",
+        max_record_seconds=30,
+        input_device="USB Desk Mic",
+        input_device_policy="playback_friendly",
+    )
+
+    with caplog.at_level(logging.WARNING):
+        recorder.start()
+        recorder.stop()
+
+    assert _FakeStream.last_kwargs is not None
+    assert "device" not in _FakeStream.last_kwargs
+    assert (
+        "Configured input device 'USB Desk Mic' could not be resolved because audio device query failed"
+        in caplog.text
+    )
+    assert "falling back to playback-friendly input selection" in caplog.text
+
+
+def test_configured_input_device_index_warns_when_query_fails(monkeypatch, caplog) -> None:
+    _reset_fake_stream()
+    monkeypatch.setattr("ptarmigan_flow.audio_recorder.sd.InputStream", _FakeStream)
+    monkeypatch.setattr(
+        "ptarmigan_flow.audio_recorder.sd.query_devices",
+        lambda: (_ for _ in ()).throw(RuntimeError("query failed")),
+    )
+
+    recorder = AudioRecorder(
+        sample_rate=16000,
+        channels=1,
+        dtype="float32",
+        max_record_seconds=30,
+        input_device=7,
+        input_device_policy="system_default",
+    )
+
+    with caplog.at_level(logging.WARNING):
+        recorder.start()
+        recorder.stop()
+
+    assert _FakeStream.last_kwargs is not None
+    assert "device" not in _FakeStream.last_kwargs
+    assert (
+        "Configured input device index 7 could not be resolved because audio device query failed"
+        in caplog.text
+    )
+    assert "falling back to system default input" in caplog.text
 
 
 def test_stop_captures_final_callback_frames(monkeypatch) -> None:
@@ -216,6 +355,33 @@ def test_playback_friendly_policy_keeps_non_bluetooth_default_input(monkeypatch)
     assert "device" not in _FakeStream.last_kwargs
 
 
+def test_playback_friendly_policy_handles_missing_default_input_index(monkeypatch) -> None:
+    _reset_fake_stream()
+    monkeypatch.setattr("ptarmigan_flow.audio_recorder.sd.InputStream", _FakeStream)
+    monkeypatch.setattr(
+        "ptarmigan_flow.audio_recorder.sd.query_devices",
+        lambda: [{"name": "MacBook Air Microphone", "max_input_channels": 1}],
+    )
+    monkeypatch.setattr(
+        "ptarmigan_flow.audio_recorder.sd.default",
+        type("DefaultDevice", (), {"device": (None, None)})(),
+    )
+
+    recorder = AudioRecorder(
+        sample_rate=16000,
+        channels=1,
+        dtype="float32",
+        max_record_seconds=30,
+        input_device_policy="playback_friendly",
+    )
+
+    recorder.start()
+    recorder.stop()
+
+    assert _FakeStream.last_kwargs is not None
+    assert _FakeStream.last_kwargs["device"] == 0
+
+
 def test_callback_stop_resets_recording_state(monkeypatch) -> None:
     monkeypatch.setattr("ptarmigan_flow.audio_recorder.sd.InputStream", _FakeStream)
 
@@ -233,6 +399,35 @@ def test_callback_stop_resets_recording_state(monkeypatch) -> None:
         recorder._callback(chunk, 16000, None, 0)
 
     assert recorder.is_recording is False
+
+
+def test_callback_stop_uses_cumulative_frames_and_resets_on_restart(monkeypatch) -> None:
+    monkeypatch.setattr("ptarmigan_flow.audio_recorder.sd.InputStream", _FakeStream)
+
+    recorder = AudioRecorder(
+        sample_rate=4,
+        channels=1,
+        dtype="float32",
+        max_record_seconds=1,
+    )
+
+    recorder.start()
+    recorder._callback(np.ones((2, 1), dtype=np.float32), 2, None, 0)
+    assert recorder.is_recording is True
+
+    with pytest.raises(audio_recorder_module.sd.CallbackStop):
+        recorder._callback(np.ones((2, 1), dtype=np.float32), 2, None, 0)
+
+    assert recorder.is_recording is False
+    merged = recorder.stop()
+    assert merged.shape == (4, 1)
+
+    recorder.start()
+    recorder._callback(np.ones((2, 1), dtype=np.float32), 2, None, 0)
+
+    assert recorder.is_recording is True
+    merged = recorder.stop()
+    assert merged.shape == (2, 1)
 
 
 def test_start_reopens_stale_stream_after_callback_stop(monkeypatch) -> None:
