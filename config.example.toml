@@ -5,6 +5,7 @@ language = "en"
 # examples:
 #   moonshine:base
 #   moonshine:tiny
+#   granite:ibm-granite/granite-4.0-1b-speech
 #   voxtral:mistralai/Voxtral-Mini-4B-Realtime-2602
 #   vllm:mistralai/Voxtral-Mini-4B-Realtime-2602
 model = "moonshine:base"

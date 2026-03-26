@@ -1,4 +1,4 @@
-"""Voxtral STT backend implemented with voxmlx (MLX)."""
+"""Granite STT backend implemented with mlx-audio."""
 
 from __future__ import annotations
 
@@ -12,8 +12,7 @@ from typing import Any
 import numpy as np
 
 from ptarmigan_flow.stt.base import SpeechToTextBackend
-from ptarmigan_flow.stt.model_families import resolve_voxtral_mlx_model_id
-from ptarmigan_flow.stt.realtime_capability import supports_realtime_input_model
+from ptarmigan_flow.stt.model_families import resolve_granite_mlx_model_id
 from ptarmigan_flow.text_processing.interfaces import NoopTextPostProcessor, TextPostProcessor
 from ptarmigan_flow.text_processing.normalizer import normalize_transcript_text
 
@@ -21,75 +20,46 @@ _TARGET_SAMPLE_RATE = 16000
 
 
 @dataclass(slots=True)
-class VoxtralMLXSettings:
+class GraniteMLXSettings:
     model_id: str
     language: str
     trailing_silence_seconds: float
 
 
-class VoxtralMLXSTTBackend(SpeechToTextBackend):
-    """Transcribe audio with voxmlx-backed Voxtral realtime model."""
+class GraniteMLXSTTBackend(SpeechToTextBackend):
+    """Transcribe audio with mlx-audio Granite speech models."""
 
     def __init__(
         self,
-        settings: VoxtralMLXSettings,
+        settings: GraniteMLXSettings,
         *,
         post_processor: TextPostProcessor | None = None,
     ) -> None:
         self._settings = settings
         self._post_processor = post_processor or NoopTextPostProcessor()
         self._ready = False
-
         self._model: Any | None = None
-        self._tokenizer: Any | None = None
-        self._generate: Any | None = None
-        self._special_token_policy: Any | None = None
-        self._prompt_tokens: list[int] = []
-        self._n_delay_tokens = 6
-        self._resolved_model_id = self._resolve_model_id(settings.model_id)
+        self._transcribe: Any | None = None
+        self._resolved_model_id = resolve_granite_mlx_model_id(settings.model_id)
 
     @staticmethod
-    def _ensure_dependencies() -> tuple[Any, Any, Any]:
+    def _ensure_dependencies() -> tuple[Any, Any]:
         try:
-            import voxmlx
-            from voxmlx.generate import generate
+            from mlx_audio.stt.generate import generate_transcription
+            from mlx_audio.stt.utils import load_model
         except Exception as exc:  # pragma: no cover - optional runtime dependency
-            raise RuntimeError("voxmlx package is required for voxtral backend on macOS") from exc
+            raise RuntimeError("mlx-audio package is required for granite backend on macOS") from exc
 
-        try:
-            from mistral_common.tokens.tokenizers.base import SpecialTokenPolicy
-        except Exception as exc:  # pragma: no cover - optional runtime dependency
-            raise RuntimeError("mistral-common is required for voxmlx backend") from exc
-
-        return voxmlx, generate, SpecialTokenPolicy
-
-    @staticmethod
-    def _resolve_model_id(model_id: str) -> str:
-        return resolve_voxtral_mlx_model_id(model_id)
-
-    @staticmethod
-    def _build_prompt_tokens(tokenizer: Any) -> tuple[list[int], int]:
-        n_left_pad_tokens = 32
-        n_delay_tokens = 6
-        streaming_pad = tokenizer.get_special_token("[STREAMING_PAD]")
-        prefix_len = n_left_pad_tokens + n_delay_tokens
-        tokens = [tokenizer.bos_id] + [streaming_pad] * prefix_len
-        return tokens, n_delay_tokens
+        return load_model, generate_transcription
 
     def preflight_model(self) -> str:
         if self._ready:
-            return "voxtral-mlx"
-        voxmlx, generate, special_token_policy = self._ensure_dependencies()
-        model, tokenizer, _config = voxmlx.load_model(self._resolved_model_id)
-        prompt_tokens, n_delay_tokens = self._build_prompt_tokens(tokenizer)
-        self._model = model
-        self._tokenizer = tokenizer
-        self._generate = generate
-        self._special_token_policy = special_token_policy
-        self._prompt_tokens = prompt_tokens
-        self._n_delay_tokens = n_delay_tokens
+            return "granite-mlx"
+        load_model, generate_transcription = self._ensure_dependencies()
+        self._model = load_model(self._resolved_model_id)
+        self._transcribe = generate_transcription
         self._ready = True
-        return "voxtral-mlx"
+        return "granite-mlx"
 
     def _ensure_ready(self) -> None:
         if self._ready:
@@ -101,19 +71,13 @@ class VoxtralMLXSTTBackend(SpeechToTextBackend):
             return ""
         self._ensure_ready()
         assert self._model is not None
-        assert self._tokenizer is not None
-        assert self._generate is not None
-        assert self._special_token_policy is not None
+        assert self._transcribe is not None
 
         wav_path = self._prepare_temp_wav(audio, sample_rate=sample_rate)
         try:
-            output_tokens = self._generate(
-                self._model,
-                wav_path,
-                self._prompt_tokens,
-                n_delay_tokens=self._n_delay_tokens,
-                temperature=0.0,
-                eos_token_id=self._tokenizer.eos_id,
+            result = self._transcribe(
+                model=self._model,
+                audio=wav_path,
             )
         finally:
             try:
@@ -121,11 +85,19 @@ class VoxtralMLXSTTBackend(SpeechToTextBackend):
             except OSError:
                 pass
 
-        text = self._tokenizer.decode(
-            output_tokens,
-            special_token_policy=self._special_token_policy.IGNORE,
-        )
-        normalized = normalize_transcript_text(str(text))
+        text = ""
+        if isinstance(result, str):
+            text = result
+        elif isinstance(result, dict):
+            value = result.get("text")
+            if isinstance(value, str):
+                text = value
+        else:
+            value = getattr(result, "text", "")
+            if isinstance(value, str):
+                text = value
+
+        normalized = normalize_transcript_text(text)
         if not normalized:
             return ""
         return self._post_processor.apply(normalized)
@@ -136,9 +108,7 @@ class VoxtralMLXSTTBackend(SpeechToTextBackend):
             yield text
 
     def supports_realtime_input(self) -> bool:
-        return supports_realtime_input_model(
-            self._settings.model_id
-        ) or supports_realtime_input_model(self._resolved_model_id)
+        return False
 
     def maybe_release_idle_resources(self) -> None:
         return None
@@ -188,15 +158,12 @@ class VoxtralMLXSTTBackend(SpeechToTextBackend):
 
     def backend_summary(self) -> str:
         return (
-            "backend=voxtral-mlx "
+            "backend=granite-mlx "
             f"model={self._resolved_model_id} "
             f"language={self._settings.language}"
         )
 
     def close(self) -> None:
         self._model = None
-        self._tokenizer = None
-        self._generate = None
-        self._special_token_policy = None
-        self._prompt_tokens = []
+        self._transcribe = None
         self._ready = False

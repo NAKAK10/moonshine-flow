@@ -96,7 +96,7 @@ Key settings:
 - `text.llm_correction.timeout_seconds`: clamped to `0.5..5.0`.
 - `text.llm_correction.max_input_chars`: clamped to `50..5000`.
 - `text.llm_correction.enabled_tools`: tool-calling switch for supporting endpoints.
-- `stt.model`: backend/model token (`moonshine:tiny`, `moonshine:base`, `voxtral:<model-id>`, `mlx:<model-id>`, `vllm:<model-id>`).
+- `stt.model`: backend/model token (`moonshine:tiny`, `moonshine:base`, `granite:<model-id>`, `voxtral:<model-id>`, `mlx:<model-id>`, `vllm:<model-id>`).
 - `stt.idle_shutdown_seconds`: idle seconds before releasing backend resources (`30.0` default, clamped to `>=0.0`, `0` disables idle shutdown).
 - `runtime.ui_enabled`: enable/disable runtime UI overlays (`true` by default).
 - `runtime.activity_indicator_enabled`: show right-bottom activity icon during recording/transcription.
@@ -137,6 +137,12 @@ Architecture compatibility (Apple Silicon / Intel):
 - On Apple Silicon with `/usr/local` Homebrew, x86_64 Python runtime can conflict with arm64 dylibs.
 - On mismatch, runtime rebuild of `$(brew --prefix)/var/ptarmigan-flow/.venv-<arch>` is attempted.
 - If still failing, fallback to `/opt/homebrew` `python@3.11` and `uv` is attempted.
+
+STT backend notes:
+- `granite:ibm-granite/granite-4.0-1b-speech` is available as a preset in `pflow list model` / `pflow init`.
+- Granite runs as a non-realtime backend in this app: transcription starts after key release rather than streaming while recording.
+- On macOS arm64, Granite uses `mlx-audio` and resolves the canonical HF id to the local MLX variant.
+- On other platforms, Granite uses `transformers>=4.52.1` with `torch`.
 
 ## Development (Minimal)
 Prerequisites:

@@ -65,6 +65,7 @@ from ptarmigan_flow.permissions import (
     reset_app_bundle_tcc,
 )
 from ptarmigan_flow.stt.factory import create_stt_backend, parse_stt_model
+from ptarmigan_flow.stt.model_families import GRANITE_HF_MODEL_ID, resolve_runtime_model_id
 from ptarmigan_flow.text_processing.interfaces import TextPostProcessor
 from ptarmigan_flow.text_processing.llm import LLMPostProcessor
 
@@ -159,6 +160,11 @@ def _is_mlx_stt_model(config: object) -> bool:
 def _is_voxtral_stt_model(config: object) -> bool:
     prefix, _model_id = parse_stt_model(_stt_model_from_config(config))
     return prefix == "voxtral"
+
+
+def _is_granite_stt_model(config: object) -> bool:
+    prefix, _model_id = parse_stt_model(_stt_model_from_config(config))
+    return prefix == "granite"
 
 
 def _supports_ansi_styles() -> bool:
@@ -692,8 +698,13 @@ def _stt_model_downloaded_display(model_token: str) -> str:
         prefix, model_id = parse_stt_model(model_token)
     except ValueError:
         return "unknown"
-    if prefix in {"vllm", "mlx", "voxtral"}:
-        return "yes" if _is_huggingface_model_downloaded(model_id) else "no"
+    resolved_model_id = resolve_runtime_model_id(
+        prefix=prefix,
+        model_id=model_id,
+        macos_arm64=_is_macos_arm64(),
+    )
+    if prefix in {"vllm", "mlx", "voxtral", "granite"}:
+        return "yes" if _is_huggingface_model_downloaded(resolved_model_id) else "no"
     # moonshine-voice manages model cache internally.
     return "unknown"
 
@@ -702,6 +713,7 @@ def _stt_model_presets() -> list[str]:
     return [
         "moonshine:tiny",
         "moonshine:base",
+        f"granite:{GRANITE_HF_MODEL_ID}",
         "voxtral:mistralai/Voxtral-Mini-4B-Realtime-2602",
     ]
 
@@ -1358,13 +1370,31 @@ def _has_voxtral_mlx_backend() -> bool:
 
 
 def _has_voxtral_transformers_backend() -> bool:
-    return bool(find_spec("transformers")) and bool(find_spec("mistral_common"))
+    return (
+        bool(find_spec("transformers"))
+        and bool(find_spec("mistral_common"))
+        and bool(find_spec("torch"))
+    )
 
 
 def _has_voxtral_backend() -> bool:
     if _is_macos_arm64():
         return _has_voxtral_mlx_backend()
     return _has_voxtral_transformers_backend()
+
+
+def _has_granite_mlx_backend() -> bool:
+    return _is_macos_arm64() and bool(find_spec("mlx_audio"))
+
+
+def _has_granite_transformers_backend() -> bool:
+    return bool(find_spec("transformers")) and bool(find_spec("torch"))
+
+
+def _has_granite_backend() -> bool:
+    if _is_macos_arm64():
+        return _has_granite_mlx_backend()
+    return _has_granite_transformers_backend()
 
 
 def _backend_guidance() -> str:
@@ -1381,7 +1411,8 @@ def _vllm_backend_guidance(missing: list[str]) -> str:
         return (
             f"vLLM backend dependencies are missing ({missing_text}). "
             "Local vLLM is not currently available on macOS arm64 in this environment. "
-            "Use stt.model=mlx:mlx-community/whisper-large-v3-turbo "
+            f"Use stt.model=granite:{GRANITE_HF_MODEL_ID}, "
+            "stt.model=mlx:mlx-community/whisper-large-v3-turbo "
             "(for example: `pflow list model`), "
             "or use stt.model=moonshine:base, or run vLLM on a Linux host."
         )
@@ -1408,6 +1439,20 @@ def _voxtral_backend_guidance() -> str:
     return (
         "Voxtral backend dependencies are missing. "
         "Install them (example: `uv add --upgrade transformers \"mistral-common[audio]\"`) "
+        "or switch stt.model to moonshine:base."
+    )
+
+
+def _granite_backend_guidance() -> str:
+    if _is_macos_arm64():
+        return (
+            "Granite backend dependencies are missing. "
+            "On macOS arm64, install mlx-audio (example: `uv add mlx-audio`) "
+            "or switch stt.model to moonshine:base."
+        )
+    return (
+        "Granite backend dependencies are missing. "
+        "Install them (example: `uv add --upgrade transformers torch`) "
         "or switch stt.model to moonshine:base."
     )
 
@@ -1513,6 +1558,14 @@ def cmd_run(args: argparse.Namespace) -> int:
             )
             if not _has_voxtral_backend():
                 LOGGER.error(_voxtral_backend_guidance())
+                return 3
+        if _is_granite_stt_model(config):
+            LOGGER.info(
+                "Selected Granite model downloaded: %s",
+                _stt_model_downloaded_display(_stt_model_from_config(config)),
+            )
+            if not _has_granite_backend():
+                LOGGER.error(_granite_backend_guidance())
                 return 3
         if _is_mlx_stt_model(config):
             LOGGER.info(
@@ -1997,7 +2050,9 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         "pynput",
         "websockets",
         "vllm",
+        "mlx_audio",
         "mlx_whisper",
+        "torch",
         "transformers",
         "mistral_common",
     ):
@@ -2011,6 +2066,11 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
     if requires_moonshine_backend and not _has_moonshine_backend():
         print(_backend_guidance())
+    try:
+        if _is_granite_stt_model(config) and not _has_granite_backend():
+            print(_granite_backend_guidance())
+    except ValueError:
+        pass
 
     try:
         stt_backend = create_stt_backend(config)

@@ -271,6 +271,14 @@ def test_effective_release_tail_keeps_explicit_override_for_realtime(monkeypatch
     assert daemon._effective_release_tail_seconds() == 0.1
 
 
+def test_effective_release_tail_keeps_default_for_granite(monkeypatch) -> None:
+    config = AppConfig()
+    config.stt.model = "granite:ibm-granite/granite-4.0-1b-speech"
+    daemon = _build_daemon(monkeypatch, config=config)
+
+    assert daemon._effective_release_tail_seconds() == 0.25
+
+
 def test_hotkey_down_cancels_pending_delayed_stop(monkeypatch) -> None:
     _reset_fake_timer()
     monkeypatch.setattr(daemon_module.threading, "Timer", _FakeTimer)

@@ -22,6 +22,10 @@ def _config(
 
 def test_parse_stt_model_supports_prefixed_tokens() -> None:
     assert parse_stt_model("moonshine:base") == ("moonshine", "base")
+    assert parse_stt_model("granite:ibm-granite/granite-4.0-1b-speech") == (
+        "granite",
+        "ibm-granite/granite-4.0-1b-speech",
+    )
     assert parse_stt_model("voxtral:mistralai/Voxtral-Mini-4B-Realtime-2602") == (
         "voxtral",
         "mistralai/Voxtral-Mini-4B-Realtime-2602",
@@ -47,6 +51,22 @@ def test_create_stt_backend_builds_vllm_backend() -> None:
     assert backend.__class__.__name__ == "VLLMRealtimeSTTBackend"
     assert backend._settings.trailing_silence_seconds == 0.0
     assert backend._settings.idle_shutdown_seconds == 30.0
+
+
+def test_create_stt_backend_builds_granite_transformers_backend(monkeypatch) -> None:
+    monkeypatch.setattr(factory_module.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(factory_module.platform, "machine", lambda: "x86_64")
+    backend = create_stt_backend(_config("granite:ibm-granite/granite-4.0-1b-speech"))
+    assert backend.__class__.__name__ == "GraniteTransformersSTTBackend"
+    assert backend._settings.trailing_silence_seconds == 1.0
+
+
+def test_create_stt_backend_builds_granite_mlx_backend_on_macos_arm64(monkeypatch) -> None:
+    monkeypatch.setattr(factory_module.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(factory_module.platform, "machine", lambda: "arm64")
+    backend = create_stt_backend(_config("granite:ibm-granite/granite-4.0-1b-speech"))
+    assert backend.__class__.__name__ == "GraniteMLXSTTBackend"
+    assert backend._settings.trailing_silence_seconds == 1.0
 
 
 def test_create_stt_backend_builds_voxtral_backend(monkeypatch) -> None:

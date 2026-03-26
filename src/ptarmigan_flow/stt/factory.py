@@ -5,6 +5,11 @@ from __future__ import annotations
 import platform
 
 from ptarmigan_flow.stt.base import SpeechToTextBackend
+from ptarmigan_flow.stt.granite_mlx import GraniteMLXSettings, GraniteMLXSTTBackend
+from ptarmigan_flow.stt.granite_transformers import (
+    GraniteTransformersSettings,
+    GraniteTransformersSTTBackend,
+)
 from ptarmigan_flow.stt.mlx_whisper import MLXWhisperBackendSettings, MLXWhisperSTTBackend
 from ptarmigan_flow.stt.moonshine import MoonshineSTTBackend
 from ptarmigan_flow.stt.vllm_realtime import VLLMRealtimeBackendSettings, VLLMRealtimeSTTBackend
@@ -24,6 +29,7 @@ def parse_stt_model(model: str) -> tuple[str, str]:
         raise ValueError(
             "stt.model must use '<backend>:<model>' format "
             "(example: moonshine:base, mlx:mlx-community/whisper-large-v3-turbo, "
+            "granite:ibm-granite/granite-4.0-1b-speech, "
             "voxtral:mistralai/Voxtral-Mini-4B-Realtime-2602, "
             "vllm:mistralai/Voxtral-Mini-4B-Realtime-2602)"
         )
@@ -91,6 +97,24 @@ def create_stt_backend(
             trailing_silence_seconds=trailing_silence_seconds,
         )
         return VoxtralTransformersSTTBackend(settings, post_processor=processor)
+
+    if prefix == "granite":
+        language = str(getattr(config, "language", "en")).strip().lower() or "en"
+        audio_cfg = getattr(config, "audio", None)
+        trailing_silence_seconds = float(getattr(audio_cfg, "trailing_silence_seconds", 1.0))
+        if _is_macos_arm64():
+            settings = GraniteMLXSettings(
+                model_id=model_id,
+                language=language,
+                trailing_silence_seconds=trailing_silence_seconds,
+            )
+            return GraniteMLXSTTBackend(settings, post_processor=processor)
+        settings = GraniteTransformersSettings(
+            model_id=model_id,
+            language=language,
+            trailing_silence_seconds=trailing_silence_seconds,
+        )
+        return GraniteTransformersSTTBackend(settings, post_processor=processor)
 
     if prefix == "mlx":
         system = platform.system().strip().lower()
