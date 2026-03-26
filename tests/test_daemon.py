@@ -1,15 +1,53 @@
 from __future__ import annotations
 
+import io
 import logging
+import sys
 import threading
 import time
 from types import SimpleNamespace
 
 import numpy as np
 
-import ptarmigan_flow.daemon as daemon_module
-from ptarmigan_flow.config import AppConfig
-from ptarmigan_flow.ports.runtime import BackendWarmState
+sys.modules.setdefault(
+    "sounddevice",
+    SimpleNamespace(
+        InputStream=object,
+        default=SimpleNamespace(device=(None, None)),
+        query_devices=lambda: [],
+    ),
+)
+sys.modules.setdefault(
+    "pynput",
+    SimpleNamespace(
+        keyboard=SimpleNamespace(
+            Key=SimpleNamespace(
+                cmd_r="cmd_r",
+                cmd="cmd",
+                shift_r="shift_r",
+                shift="shift",
+                alt_r="alt_r",
+                alt_l="alt_l",
+                ctrl_r="ctrl_r",
+                ctrl_l="ctrl_l",
+            ),
+            KeyCode=SimpleNamespace(from_char=lambda char: char),
+            Listener=lambda **_kwargs: SimpleNamespace(
+                start=lambda: None,
+                stop=lambda: None,
+                join=lambda: None,
+            ),
+        )
+    ),
+)
+
+import ptarmigan_flow.daemon as daemon_module  # noqa: E402
+from ptarmigan_flow.config import AppConfig  # noqa: E402
+from ptarmigan_flow.ports.runtime import BackendWarmState  # noqa: E402
+from ptarmigan_flow.stt.runtime_backend import (  # noqa: E402
+    SpeechToTextRequestTimeoutError,
+    STTRecoverySummary,
+)
 
 
 class _FakeRecorder:
@@ -211,7 +249,7 @@ def _build_daemon(
     monkeypatch.setattr(daemon_module, "AudioRecorder", _FakeRecorder)
     monkeypatch.setattr(
         daemon_module,
-        "create_stt_backend",
+        "create_runtime_stt_backend",
         lambda *_args, **_kwargs: _FakeTranscriber(),
     )
     monkeypatch.setattr(daemon_module, "OutputInjector", _FakeInjector)
@@ -222,6 +260,29 @@ def _build_daemon(
         lambda *_args, **_kwargs: _FakeActivityIndicator(),
     )
     return daemon_module.PtarmiganFlowDaemon(config or AppConfig())
+
+
+def _timeout_error(*, request_kind: str = "transcribe") -> SpeechToTextRequestTimeoutError:
+    return SpeechToTextRequestTimeoutError(
+        STTRecoverySummary(
+            failure_kind="timeout",
+            request_kind=request_kind,
+            request_id=1,
+            generation=1,
+            backend_summary="backend=fake-backend",
+            audio_seconds=1.0,
+            timeout_seconds=0.1,
+            started_at_monotonic=1.0,
+            ended_at_monotonic=1.1,
+            warm_state=None,
+            restart_succeeded=True,
+        )
+    )
+
+
+class _TTYBuffer(io.StringIO):
+    def isatty(self) -> bool:
+        return True
 
 
 def test_hotkey_down_ignored_while_transcription_busy(monkeypatch) -> None:
@@ -843,3 +904,32 @@ def test_stop_recording_force_closes_recorder_when_stop_fails(monkeypatch) -> No
     assert daemon.recorder.is_recording is False
     assert daemon.activity_indicator.hide_calls == 1
     assert daemon._audio_queue.qsize() == 0
+
+
+def test_worker_recovers_from_recoverable_stt_failure(monkeypatch) -> None:
+    daemon = _build_daemon(monkeypatch)
+    stderr = _TTYBuffer()
+    monkeypatch.setattr(daemon_module.sys, "stderr", stderr)
+
+    def _raise_timeout(*_args, **_kwargs) -> str:
+        raise _timeout_error()
+
+    daemon.transcriber.transcribe = _raise_timeout  # type: ignore[method-assign]
+    daemon._audio_queue.put(
+        SimpleNamespace(
+            audio=np.array([[0.25], [0.5]], dtype=np.float32),
+            emitted_prefix="he",
+        )
+    )
+
+    worker = threading.Thread(target=daemon._worker_loop, daemon=True)
+    worker.start()
+    daemon._audio_queue.join()
+    daemon._stop_event.set()
+    worker.join(timeout=1.0)
+
+    assert daemon.injector.injected == []
+    assert daemon.activity_indicator.hide_calls == 1
+    assert daemon._transcription_in_progress is False
+    assert len(daemon._recoverable_stt_failures) == 1
+    assert "Recovered from STT timeout" in stderr.getvalue()

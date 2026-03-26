@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from ptarmigan_flow.config import AppConfig, load_config, write_config, write_example_config
+from ptarmigan_flow.stt.model_families import GRANITE_HF_MODEL_ID
 
 
 def test_write_example_and_load_config(tmp_path: Path) -> None:
@@ -13,7 +14,7 @@ def test_write_example_and_load_config(tmp_path: Path) -> None:
     assert isinstance(loaded, AppConfig)
     assert loaded.hotkey.key == "right_cmd"
     assert loaded.language == "en"
-    assert loaded.stt.model == "moonshine:base"
+    assert loaded.stt.model == f"granite:{GRANITE_HF_MODEL_ID}"
     assert loaded.stt.idle_shutdown_seconds == 30.0
     assert loaded.audio.release_tail_seconds == 0.25
     assert loaded.audio.hotkey_release_reconcile_seconds == 0.25
@@ -45,6 +46,7 @@ def test_load_config_creates_missing_file(tmp_path: Path) -> None:
     assert loaded.audio.trailing_silence_seconds == 1.0
     assert loaded.audio.input_device_policy.value == "playback_friendly"
     assert loaded.stt.idle_shutdown_seconds == 30.0
+    assert loaded.stt.model == f"granite:{GRANITE_HF_MODEL_ID}"
     assert loaded.language == "en"
     assert loaded.output.mode.value == "direct_typing"
     assert loaded.runtime.ui_enabled is True

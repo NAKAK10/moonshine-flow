@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import logging
 import queue
+import sys
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass
 
 import numpy as np
@@ -24,7 +26,13 @@ from ptarmigan_flow.ports.runtime import (
     TextOutputPort,
     format_backend_warm_state,
 )
-from ptarmigan_flow.stt.factory import create_stt_backend, parse_stt_model
+from ptarmigan_flow.stt.factory import parse_stt_model
+from ptarmigan_flow.stt.runtime_backend import (
+    RecoverableSpeechToTextError,
+    STTRecoverySummary,
+    create_runtime_stt_backend,
+    format_stt_recovery_summary,
+)
 from ptarmigan_flow.text_processing.interfaces import TextPostProcessor
 
 LOGGER = logging.getLogger(__name__)
@@ -74,6 +82,7 @@ class PtarmiganFlowDaemon:
         self._live_last_snapshot_samples = 0
         self._live_stop_requested = False
         self._hotkey_not_pressed_since_monotonic: float | None = None
+        self._recoverable_stt_failures: deque[STTRecoverySummary] = deque(maxlen=16)
 
         self.recorder: AudioInputPort = AudioRecorder(
             sample_rate=config.audio.sample_rate,
@@ -83,7 +92,7 @@ class PtarmiganFlowDaemon:
             input_device=config.audio.input_device,
             input_device_policy=str(config.audio.input_device_policy),
         )
-        self.transcriber: SpeechToTextPort = create_stt_backend(
+        self.transcriber: SpeechToTextPort = create_runtime_stt_backend(
             config,
             post_processor=post_processor,
         )
@@ -137,6 +146,13 @@ class PtarmiganFlowDaemon:
         except Exception:
             LOGGER.debug("Failed to close activity indicator", exc_info=True)
 
+    def _record_recoverable_stt_failure(self, exc: RecoverableSpeechToTextError) -> None:
+        summary = exc.summary
+        self._recoverable_stt_failures.append(summary)
+        if not sys.stderr.isatty():
+            return
+        print(format_stt_recovery_summary(summary), file=sys.stderr, flush=True)
+
     def _transcriber_warm_state(self) -> BackendWarmState | None:
         warm_state = getattr(self.transcriber, "warm_state", None)
         if not callable(warm_state):
@@ -183,7 +199,11 @@ class PtarmiganFlowDaemon:
         state: BackendWarmState,
     ) -> tuple[bool, float | None, str]:
         if not state.supports_keydown_warmup:
-            return False, self._warm_state_age_seconds(state), "backend does not support keydown warmup"
+            return (
+                False,
+                self._warm_state_age_seconds(state),
+                "backend does not support keydown warmup",
+            )
         if state.warmup_running:
             return False, self._warm_state_age_seconds(state), "backend warmup is already running"
 
@@ -246,6 +266,8 @@ class PtarmiganFlowDaemon:
                     LOGGER.info("Aborted keydown warmup after waiting for transcriber lock")
                     return
                 warmup()
+        except RecoverableSpeechToTextError as exc:
+            self._record_recoverable_stt_failure(exc)
         except Exception:
             LOGGER.exception("Keydown warmup failed")
         else:
@@ -478,6 +500,8 @@ class PtarmiganFlowDaemon:
                 if not self._live_stop_requested:
                     self._live_emitted_text = emitted
                     self._live_last_snapshot_samples = total_samples
+        except RecoverableSpeechToTextError as exc:
+            self._record_recoverable_stt_failure(exc)
         except Exception:
             LOGGER.exception("Realtime input tick failed")
         finally:
@@ -539,6 +563,8 @@ class PtarmiganFlowDaemon:
                                 LOGGER.info("Transcription result was empty")
                         else:
                             LOGGER.info("Transcription result was empty")
+            except RecoverableSpeechToTextError as exc:
+                self._record_recoverable_stt_failure(exc)
             except Exception:
                 LOGGER.exception("Transcription pipeline failed")
             finally:
