@@ -25,6 +25,54 @@ class _FakeWindow:
         self.pump_calls += 1
 
 
+class _FakeLayer:
+    def __init__(self) -> None:
+        self.hidden = None
+        self.background_color = None
+        self.border_color = None
+        self.border_width = None
+        self.shadow_color = None
+        self.shadow_opacity = None
+        self.shadow_radius = None
+        self.shadow_offset = None
+        self.opacity = None
+
+    def setHidden_(self, value) -> None:
+        self.hidden = value
+
+    def setBackgroundColor_(self, value) -> None:
+        self.background_color = value
+
+    def setBorderColor_(self, value) -> None:
+        self.border_color = value
+
+    def setBorderWidth_(self, value) -> None:
+        self.border_width = value
+
+    def setShadowColor_(self, value) -> None:
+        self.shadow_color = value
+
+    def setShadowOpacity_(self, value) -> None:
+        self.shadow_opacity = value
+
+    def setShadowRadius_(self, value) -> None:
+        self.shadow_radius = value
+
+    def setShadowOffset_(self, value) -> None:
+        self.shadow_offset = value
+
+    def setOpacity_(self, value) -> None:
+        self.opacity = value
+
+
+class _FakeGlassWindow:
+    def __init__(self) -> None:
+        self._glass_layer = _FakeLayer()
+
+    def _color(self, r: float, g: float, b: float, a: float):
+        return (r, g, b, a)
+
+
 def test_runtime_processes_show_and_hide_commands() -> None:
     window = _FakeWindow()
     runtime = overlay_module.OverlayRuntime(window=window, parent_pid=123)
@@ -93,3 +141,19 @@ def test_parse_args_accepts_explicit_parent_pid() -> None:
 
     assert parsed.size == 56
     assert parsed.parent_pid == 4321
+
+
+def test_clear_backplate_visuals_hides_glass_layer() -> None:
+    window = _FakeGlassWindow()
+
+    overlay_module.AppKitOverlayWindow._clear_backplate_visuals(window)
+
+    assert window._glass_layer.hidden is True
+    assert window._glass_layer.background_color == (0.0, 0.0, 0.0, 0.0)
+    assert window._glass_layer.border_color == (0.0, 0.0, 0.0, 0.0)
+    assert window._glass_layer.border_width == 0.0
+    assert window._glass_layer.shadow_color == (0.0, 0.0, 0.0, 0.0)
+    assert window._glass_layer.shadow_opacity == 0.0
+    assert window._glass_layer.shadow_radius == 0.0
+    assert window._glass_layer.shadow_offset == (0.0, 0.0)
+    assert window._glass_layer.opacity == 0.0
