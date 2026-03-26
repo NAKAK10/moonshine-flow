@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from ptarmigan_flow.config import AppConfig, load_config, write_example_config
+from ptarmigan_flow.config import AppConfig, load_config, write_config, write_example_config
 
 
 def test_write_example_and_load_config(tmp_path: Path) -> None:
@@ -91,6 +91,17 @@ notify_on_error = true
     loaded = load_config(cfg_path)
     assert loaded.audio.input_device == 3
     assert loaded.audio.input_device_policy.value == "external_preferred"
+
+
+def test_write_config_round_trips_string_input_device(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "config.toml"
+    config = load_config(cfg_path)
+    config.audio.input_device = "USB Desk Mic"
+
+    write_config(cfg_path, config)
+
+    loaded = load_config(cfg_path)
+    assert loaded.audio.input_device == "USB Desk Mic"
 
 
 def test_load_config_clamps_audio_tail_durations_over_limit(tmp_path: Path) -> None:

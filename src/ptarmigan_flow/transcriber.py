@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
 
+from ptarmigan_flow.ports.runtime import BackendWarmState
 from ptarmigan_flow.text_processing.interfaces import NoopTextPostProcessor, TextPostProcessor
 from ptarmigan_flow.text_processing.normalizer import normalize_transcript_text
 
@@ -44,6 +46,7 @@ class MoonshineTranscriber:
         self._resolved_model_path = ""
         self._transcriber: Any | None = None
         self._post_processor = post_processor or NoopTextPostProcessor()
+        self._last_activity_at_monotonic: float | None = None
 
     @staticmethod
     def _resolve_device(requested: str) -> DeviceResolution:
@@ -126,6 +129,7 @@ class MoonshineTranscriber:
             sample_rate=16000,
         )
         self._stringify_transcript(transcript)
+        self._last_activity_at_monotonic = time.monotonic()
 
         return self._backend
 
@@ -147,7 +151,23 @@ class MoonshineTranscriber:
             normalized.tolist(),
             sample_rate=sample_rate,
         )
+        self._last_activity_at_monotonic = time.monotonic()
         return self._post_processor.apply(self._stringify_transcript(transcript))
+
+    def warm_state(self) -> BackendWarmState:
+        ready = self._transcriber is not None
+        warmed = ready and self._last_activity_at_monotonic is not None
+        return BackendWarmState(
+            resource_mode="in_process",
+            ready=ready,
+            warmed=warmed,
+            warmup_running=False,
+            supports_keydown_warmup=False,
+            last_activity_at_monotonic=self._last_activity_at_monotonic,
+        )
+
+    def warmup_for_low_latency(self) -> None:
+        return None
 
     def backend_summary(self) -> str:
         """Return a short backend summary for diagnostics."""
@@ -166,3 +186,4 @@ class MoonshineTranscriber:
         if callable(close_fn):
             close_fn()
         self._transcriber = None
+        self._last_activity_at_monotonic = None

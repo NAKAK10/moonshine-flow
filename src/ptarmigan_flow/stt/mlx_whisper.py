@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import os
 import tempfile
+import time
 import wave
 from collections.abc import Iterator
 from dataclasses import dataclass
 
 import numpy as np
 
+from ptarmigan_flow.ports.runtime import BackendWarmState, format_backend_warm_state
 from ptarmigan_flow.stt.base import SpeechToTextBackend
 from ptarmigan_flow.text_processing.interfaces import NoopTextPostProcessor, TextPostProcessor
 from ptarmigan_flow.text_processing.normalizer import normalize_transcript_text
@@ -36,6 +38,7 @@ class MLXWhisperSTTBackend(SpeechToTextBackend):
         self._settings = settings
         self._post_processor = post_processor or NoopTextPostProcessor()
         self._ready = False
+        self._last_activity_at_monotonic: float | None = None
 
     @staticmethod
     def _ensure_dependency():
@@ -83,6 +86,7 @@ class MLXWhisperSTTBackend(SpeechToTextBackend):
         elif isinstance(result, str):
             text = result
 
+        self._last_activity_at_monotonic = time.monotonic()
         normalized = normalize_transcript_text(text)
         if not normalized:
             return ""
@@ -96,11 +100,27 @@ class MLXWhisperSTTBackend(SpeechToTextBackend):
     def supports_realtime_input(self) -> bool:
         return False
 
+    def warm_state(self) -> BackendWarmState:
+        return BackendWarmState(
+            resource_mode="in_process",
+            ready=self._ready,
+            warmed=self._last_activity_at_monotonic is not None,
+            warmup_running=False,
+            supports_keydown_warmup=False,
+            last_activity_at_monotonic=self._last_activity_at_monotonic,
+        )
+
+    def warmup_for_low_latency(self) -> None:
+        return None
+
     def maybe_release_idle_resources(self) -> None:
         return None
 
     def runtime_status(self) -> str:
-        return f"🚀 Backend ready (no external server): {self.backend_summary()}"
+        return (
+            "🚀 Backend ready (no external server): "
+            f"{self.backend_summary()} {format_backend_warm_state(self.warm_state())}"
+        )
 
     def _prepare_temp_wav(self, audio: np.ndarray, *, sample_rate: int) -> str:
         mono = self._to_mono_float32(audio)
@@ -150,4 +170,5 @@ class MLXWhisperSTTBackend(SpeechToTextBackend):
         )
 
     def close(self) -> None:
-        return None
+        self._ready = False
+        self._last_activity_at_monotonic = None

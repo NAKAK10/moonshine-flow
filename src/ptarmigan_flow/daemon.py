@@ -19,8 +19,10 @@ from ptarmigan_flow.output_injector import OutputInjector
 from ptarmigan_flow.ports.runtime import (
     ActivityIndicatorPort,
     AudioInputPort,
+    BackendWarmState,
     SpeechToTextPort,
     TextOutputPort,
+    format_backend_warm_state,
 )
 from ptarmigan_flow.stt.factory import create_stt_backend, parse_stt_model
 from ptarmigan_flow.text_processing.interfaces import TextPostProcessor
@@ -31,6 +33,7 @@ _RECORDING_STALE_GRACE_SECONDS = 0.5
 _RECORDING_STARTUP_GRACE_SECONDS = 0.35
 _LIVE_INPUT_STOP_LOCK_TIMEOUT_SECONDS = 0.35
 _LIVE_INPUT_MIN_NEW_AUDIO_SECONDS = 0.1
+_KEYDOWN_WARMUP_COLD_THRESHOLD_SECONDS = 300.0
 _MAIN_LOOP_IDLE_SLEEP_SECONDS = 0.2
 _MAIN_LOOP_ACTIVE_SLEEP_SECONDS = 0.05
 
@@ -58,10 +61,12 @@ class PtarmiganFlowDaemon:
         self._audio_queue: queue.Queue[_QueuedAudio] = queue.Queue()
         self._state_lock = threading.Lock()
         self._live_input_lock = threading.Lock()
+        self._keydown_warmup_thread_lock = threading.Lock()
         self._transcription_in_progress = False
         self._last_release_at_monotonic = 0.0
         self._recording_stale_since_monotonic: float | None = None
         self._recording_started_at_monotonic: float | None = None
+        self._keydown_warmup_thread: threading.Thread | None = None
         self._pending_stop_timer: threading.Timer | None = None
         self._pending_stop_id: int | None = None
         self._next_stop_id = 0
@@ -132,6 +137,134 @@ class PtarmiganFlowDaemon:
         except Exception:
             LOGGER.debug("Failed to close activity indicator", exc_info=True)
 
+    def _transcriber_warm_state(self) -> BackendWarmState | None:
+        warm_state = getattr(self.transcriber, "warm_state", None)
+        if not callable(warm_state):
+            return None
+        try:
+            return warm_state()
+        except Exception:
+            LOGGER.debug("Failed to read backend warm state", exc_info=True)
+            return None
+
+    @staticmethod
+    def _warm_state_age_seconds(state: BackendWarmState) -> float | None:
+        last_activity = state.last_activity_at_monotonic
+        if last_activity is None:
+            return None
+        return max(0.0, time.monotonic() - last_activity)
+
+    @staticmethod
+    def _format_warm_state_age(age_seconds: float | None) -> str:
+        if age_seconds is None:
+            return "never"
+        return f"{age_seconds:.1f}s"
+
+    def _keydown_warmup_thread_running(self) -> bool:
+        with self._keydown_warmup_thread_lock:
+            thread = self._keydown_warmup_thread
+            return thread is not None and thread.is_alive()
+
+    def _is_hotkey_physically_pressed(self) -> bool | None:
+        physical_pressed_state = getattr(self.hotkey, "physical_pressed_state", None)
+        if not callable(physical_pressed_state):
+            return None
+        try:
+            physical_state = physical_pressed_state()
+        except Exception:
+            LOGGER.debug("Failed to read hotkey physical pressed state", exc_info=True)
+            return None
+        if physical_state is None:
+            return None
+        return bool(physical_state)
+
+    def _should_start_keydown_warmup(
+        self,
+        state: BackendWarmState,
+    ) -> tuple[bool, float | None, str]:
+        if not state.supports_keydown_warmup:
+            return False, self._warm_state_age_seconds(state), "backend does not support keydown warmup"
+        if state.warmup_running:
+            return False, self._warm_state_age_seconds(state), "backend warmup is already running"
+
+        age_seconds = self._warm_state_age_seconds(state)
+        if not state.ready:
+            return True, age_seconds, "backend is not ready"
+        if not state.warmed or age_seconds is None:
+            return True, age_seconds, "backend has not completed a real warmup yet"
+        if age_seconds >= _KEYDOWN_WARMUP_COLD_THRESHOLD_SECONDS:
+            return True, age_seconds, "backend warm state is stale"
+        return False, age_seconds, "backend is still warm"
+
+    def _maybe_start_keydown_warmup(self) -> None:
+        state = self._transcriber_warm_state()
+        if state is None:
+            return
+
+        should_start, age_seconds, reason = self._should_start_keydown_warmup(state)
+        if not should_start:
+            LOGGER.debug(
+                "Skipping keydown warmup (%s, cold_age=%s, %s)",
+                reason,
+                self._format_warm_state_age(age_seconds),
+                format_backend_warm_state(state),
+            )
+            return
+
+        with self._keydown_warmup_thread_lock:
+            if self._keydown_warmup_thread is not None and self._keydown_warmup_thread.is_alive():
+                LOGGER.debug("Skipping keydown warmup because a worker is already running")
+                return
+            thread = threading.Thread(
+                target=self._run_keydown_warmup,
+                daemon=True,
+                name="keydown-warmup",
+            )
+            self._keydown_warmup_thread = thread
+
+        LOGGER.info(
+            "Starting keydown warmup (%s, cold_age=%s, %s)",
+            reason,
+            self._format_warm_state_age(age_seconds),
+            format_backend_warm_state(state),
+        )
+        thread.start()
+
+    def _run_keydown_warmup(self) -> None:
+        started_at = time.monotonic()
+        try:
+            if self._stop_event.is_set() or not self.recorder.is_recording:
+                LOGGER.info("Aborted keydown warmup before acquiring transcriber lock")
+                return
+            warmup = getattr(self.transcriber, "warmup_for_low_latency", None)
+            if not callable(warmup):
+                LOGGER.debug("Transcriber does not expose keydown warmup hook")
+                return
+
+            with self._live_input_lock:
+                if self._stop_event.is_set() or not self.recorder.is_recording:
+                    LOGGER.info("Aborted keydown warmup after waiting for transcriber lock")
+                    return
+                warmup()
+        except Exception:
+            LOGGER.exception("Keydown warmup failed")
+        else:
+            state = self._transcriber_warm_state()
+            elapsed = time.monotonic() - started_at
+            if state is None:
+                LOGGER.info("Finished keydown warmup in %.3fs", elapsed)
+            else:
+                LOGGER.info(
+                    "Finished keydown warmup in %.3fs (%s)",
+                    elapsed,
+                    format_backend_warm_state(state),
+                )
+        finally:
+            with self._keydown_warmup_thread_lock:
+                current_thread = threading.current_thread()
+                if self._keydown_warmup_thread is current_thread:
+                    self._keydown_warmup_thread = None
+
     def _on_hotkey_down(self) -> None:
         if self._stop_event.is_set():
             return
@@ -160,6 +293,7 @@ class PtarmiganFlowDaemon:
                 self._recording_started_at_monotonic = now
                 self._recording_stale_since_monotonic = None
             self._show_recording_indicator()
+            self._maybe_start_keydown_warmup()
             LOGGER.info("Recording started")
         except Exception:
             LOGGER.exception("Failed to start recording")
@@ -244,10 +378,18 @@ class PtarmiganFlowDaemon:
 
         lock_acquired = self._live_input_lock.acquire(timeout=_LIVE_INPUT_STOP_LOCK_TIMEOUT_SECONDS)
         if not lock_acquired:
-            LOGGER.warning(
-                "Live input lock was busy during stop; stopping without live lock (%s)",
-                reason,
-            )
+            warmup_running = self._keydown_warmup_thread_running()
+            if warmup_running and not self._live_input_enabled():
+                LOGGER.info(
+                    "Keydown warmup still held transcriber lock during stop; "
+                    "stopping without live lock (%s)",
+                    reason,
+                )
+            else:
+                LOGGER.warning(
+                    "Live input lock was busy during stop; stopping without live lock (%s)",
+                    reason,
+                )
         try:
             audio = self.recorder.stop()
         except Exception:
@@ -442,6 +584,13 @@ class PtarmiganFlowDaemon:
         except Exception:
             LOGGER.debug("Failed to read hotkey pressed state", exc_info=True)
             return
+
+        physical_pressed = self._is_hotkey_physically_pressed()
+        # Treat the physical-state probe as a rescue signal only. Quartz can
+        # transiently report False while the listener still correctly knows the
+        # modifier is held, and forcing False here can stop recording mid-hold.
+        if not hotkey_pressed and physical_pressed is True:
+            hotkey_pressed = True
 
         if hotkey_pressed:
             with self._state_lock:

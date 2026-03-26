@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import os
 import tempfile
+import threading
+import time
 import wave
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -11,6 +13,7 @@ from typing import Any
 
 import numpy as np
 
+from ptarmigan_flow.ports.runtime import BackendWarmState, format_backend_warm_state
 from ptarmigan_flow.stt.base import SpeechToTextBackend
 from ptarmigan_flow.stt.model_families import resolve_granite_mlx_model_id
 from ptarmigan_flow.text_processing.interfaces import NoopTextPostProcessor, TextPostProcessor
@@ -41,6 +44,9 @@ class GraniteMLXSTTBackend(SpeechToTextBackend):
         self._model: Any | None = None
         self._transcribe: Any | None = None
         self._resolved_model_id = resolve_granite_mlx_model_id(settings.model_id)
+        self._warmup_running = False
+        self._last_activity_at_monotonic: float | None = None
+        self._state_lock = threading.Lock()
 
     @staticmethod
     def _ensure_dependencies() -> tuple[Any, Any]:
@@ -85,6 +91,7 @@ class GraniteMLXSTTBackend(SpeechToTextBackend):
             except OSError:
                 pass
 
+        self._mark_activity()
         text = ""
         if isinstance(result, str):
             text = result
@@ -110,15 +117,73 @@ class GraniteMLXSTTBackend(SpeechToTextBackend):
     def supports_realtime_input(self) -> bool:
         return False
 
+    def warm_state(self) -> BackendWarmState:
+        with self._state_lock:
+            ready = self._ready
+            warmup_running = self._warmup_running
+            last_activity = self._last_activity_at_monotonic
+        return BackendWarmState(
+            resource_mode="in_process",
+            ready=ready,
+            warmed=last_activity is not None,
+            warmup_running=warmup_running,
+            supports_keydown_warmup=True,
+            last_activity_at_monotonic=last_activity,
+        )
+
+    def warmup_for_low_latency(self) -> None:
+        with self._state_lock:
+            if self._warmup_running:
+                return
+            self._warmup_running = True
+        try:
+            self._ensure_ready()
+            assert self._model is not None
+            assert self._transcribe is not None
+
+            warmup_audio = np.zeros(int(_TARGET_SAMPLE_RATE * 0.2), dtype=np.float32)
+            wav_path = self._prepare_temp_wav(
+                warmup_audio,
+                sample_rate=_TARGET_SAMPLE_RATE,
+                trailing_silence_seconds=0.0,
+            )
+            try:
+                self._transcribe(
+                    model=self._model,
+                    audio=wav_path,
+                )
+            finally:
+                try:
+                    os.unlink(wav_path)
+                except OSError:
+                    pass
+            self._mark_activity()
+        finally:
+            with self._state_lock:
+                self._warmup_running = False
+
     def maybe_release_idle_resources(self) -> None:
         return None
 
     def runtime_status(self) -> str:
-        return f"🚀 Backend ready (no external server): {self.backend_summary()}"
+        return (
+            "🚀 Backend ready (no external server): "
+            f"{self.backend_summary()} {format_backend_warm_state(self.warm_state())}"
+        )
 
-    def _prepare_temp_wav(self, audio: np.ndarray, *, sample_rate: int) -> str:
+    def _prepare_temp_wav(
+        self,
+        audio: np.ndarray,
+        *,
+        sample_rate: int,
+        trailing_silence_seconds: float | None = None,
+    ) -> str:
         mono = self._to_mono_float32(audio)
-        mono = self._append_trailing_silence(mono, sample_rate=sample_rate)
+        mono = self._append_trailing_silence(
+            mono,
+            sample_rate=sample_rate,
+            trailing_silence_seconds=trailing_silence_seconds,
+        )
         if sample_rate != _TARGET_SAMPLE_RATE:
             mono = self._resample_linear(mono, src_rate=sample_rate, dst_rate=_TARGET_SAMPLE_RATE)
         pcm16 = (np.clip(mono, -1.0, 1.0) * 32767.0).astype(np.int16)
@@ -138,8 +203,16 @@ class GraniteMLXSTTBackend(SpeechToTextBackend):
             return np.mean(audio, axis=1).astype(np.float32, copy=False)
         return audio.astype(np.float32, copy=False)
 
-    def _append_trailing_silence(self, audio: np.ndarray, *, sample_rate: int) -> np.ndarray:
-        trailing = max(0.0, min(1.0, float(self._settings.trailing_silence_seconds)))
+    def _append_trailing_silence(
+        self,
+        audio: np.ndarray,
+        *,
+        sample_rate: int,
+        trailing_silence_seconds: float | None = None,
+    ) -> np.ndarray:
+        if trailing_silence_seconds is None:
+            trailing_silence_seconds = float(self._settings.trailing_silence_seconds)
+        trailing = max(0.0, min(1.0, float(trailing_silence_seconds)))
         trailing_samples = int(sample_rate * trailing)
         if trailing_samples <= 0:
             return audio
@@ -163,7 +236,14 @@ class GraniteMLXSTTBackend(SpeechToTextBackend):
             f"language={self._settings.language}"
         )
 
+    def _mark_activity(self) -> None:
+        with self._state_lock:
+            self._last_activity_at_monotonic = time.monotonic()
+
     def close(self) -> None:
         self._model = None
         self._transcribe = None
         self._ready = False
+        with self._state_lock:
+            self._warmup_running = False
+            self._last_activity_at_monotonic = None

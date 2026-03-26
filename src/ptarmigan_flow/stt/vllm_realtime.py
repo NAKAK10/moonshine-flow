@@ -5,11 +5,13 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 
 import numpy as np
 
+from ptarmigan_flow.ports.runtime import BackendWarmState, format_backend_warm_state
 from ptarmigan_flow.stt.base import SpeechToTextBackend
 from ptarmigan_flow.stt.realtime_capability import supports_realtime_input_model
 from ptarmigan_flow.stt.server import VLLMServerManager
@@ -43,10 +45,12 @@ class VLLMRealtimeSTTBackend(SpeechToTextBackend):
         self._server_manager = server_manager or VLLMServerManager()
         self._post_processor = post_processor or NoopTextPostProcessor()
         self._ready = False
+        self._last_activity_at_monotonic: float | None = None
 
     def preflight_model(self) -> str:
         self._server_manager.ensure_started(self._settings.model_id)
         self._ready = True
+        self._last_activity_at_monotonic = time.monotonic()
         return "vllm-realtime"
 
     def _ensure_ready(self) -> None:
@@ -67,7 +71,7 @@ class VLLMRealtimeSTTBackend(SpeechToTextBackend):
         if audio.size == 0:
             return
         self._ensure_ready()
-        self._server_manager.mark_activity()
+        self._mark_activity()
         pcm16 = self._prepare_pcm16(audio, sample_rate=sample_rate)
         if not pcm16:
             return
@@ -86,22 +90,46 @@ class VLLMRealtimeSTTBackend(SpeechToTextBackend):
                 yield cumulative
             if self._is_done_event(event):
                 break
-        self._server_manager.mark_activity()
+        self._mark_activity()
 
     def supports_realtime_input(self) -> bool:
         return supports_realtime_input_model(self._settings.model_id)
 
+    def warm_state(self) -> BackendWarmState:
+        return BackendWarmState(
+            resource_mode="external_server",
+            ready=self._ready,
+            warmed=self._ready,
+            warmup_running=False,
+            supports_keydown_warmup=False,
+            last_activity_at_monotonic=self._last_activity_at_monotonic,
+        )
+
+    def warmup_for_low_latency(self) -> None:
+        return None
+
     def maybe_release_idle_resources(self) -> None:
         idle_seconds = float(self._settings.idle_shutdown_seconds)
-        self._server_manager.stop_if_idle(idle_seconds)
+        if self._server_manager.stop_if_idle(idle_seconds):
+            self._ready = False
 
     def runtime_status(self) -> str:
         summary = self.backend_summary()
         try:
             endpoint = self._server_manager.endpoint_url
         except Exception:
-            return f"💨 External server stopped: {summary}"
-        return f"🚀 External server active: {summary} endpoint={endpoint}"
+            return (
+                "💨 External server stopped: "
+                f"{summary} {format_backend_warm_state(self.warm_state())}"
+            )
+        return (
+            "🚀 External server active: "
+            f"{summary} endpoint={endpoint} {format_backend_warm_state(self.warm_state())}"
+        )
+
+    def _mark_activity(self) -> None:
+        self._server_manager.mark_activity()
+        self._last_activity_at_monotonic = time.monotonic()
 
     def _stream_events(self, pcm16: bytes) -> Iterator[dict[str, object]]:
         try:
@@ -228,3 +256,5 @@ class VLLMRealtimeSTTBackend(SpeechToTextBackend):
 
     def close(self) -> None:
         self._server_manager.stop()
+        self._ready = False
+        self._last_activity_at_monotonic = None

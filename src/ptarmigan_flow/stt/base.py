@@ -7,6 +7,8 @@ from typing import Protocol
 
 import numpy as np
 
+from ptarmigan_flow.ports.runtime import BackendWarmState
+
 
 class SpeechToTextBackend(Protocol):
     """Speech-to-text backend protocol."""
@@ -19,6 +21,12 @@ class SpeechToTextBackend(Protocol):
 
     def transcribe_stream(self, audio: np.ndarray, sample_rate: int) -> Iterator[str]:
         """Yield cumulative transcript updates for one audio segment."""
+
+    def warm_state(self) -> BackendWarmState:
+        """Return backend warm-state details for low-latency decisions."""
+
+    def warmup_for_low_latency(self) -> None:
+        """Best-effort warmup hook for backends that support keydown warmup."""
 
     def supports_realtime_input(self) -> bool:
         """Return whether this backend/model supports true live input while recording."""

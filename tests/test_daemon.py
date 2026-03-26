@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from types import SimpleNamespace
@@ -8,6 +9,7 @@ import numpy as np
 
 import ptarmigan_flow.daemon as daemon_module
 from ptarmigan_flow.config import AppConfig
+from ptarmigan_flow.ports.runtime import BackendWarmState
 
 
 class _FakeRecorder:
@@ -61,6 +63,18 @@ class _FakeTranscriber:
         del kwargs
         self.calls: list[np.ndarray] = []
         self.idle_release_calls = 0
+        self.warmup_calls = 0
+        self.warmup_started = threading.Event()
+        self.warmup_unblock = threading.Event()
+        self.warmup_unblock.set()
+        self._warm_state = BackendWarmState(
+            resource_mode="in_process",
+            ready=True,
+            warmed=True,
+            warmup_running=False,
+            supports_keydown_warmup=False,
+            last_activity_at_monotonic=time.monotonic(),
+        )
 
     def transcribe(self, audio: np.ndarray, sample_rate: int) -> str:
         del sample_rate
@@ -72,6 +86,22 @@ class _FakeTranscriber:
 
     def supports_realtime_input(self) -> bool:
         return False
+
+    def warm_state(self) -> BackendWarmState:
+        return self._warm_state
+
+    def warmup_for_low_latency(self) -> None:
+        self.warmup_calls += 1
+        self.warmup_started.set()
+        self.warmup_unblock.wait(timeout=1.0)
+        self._warm_state = BackendWarmState(
+            resource_mode=self._warm_state.resource_mode,
+            ready=True,
+            warmed=True,
+            warmup_running=False,
+            supports_keydown_warmup=self._warm_state.supports_keydown_warmup,
+            last_activity_at_monotonic=time.monotonic(),
+        )
 
     def backend_summary(self) -> str:
         return "fake-backend"
@@ -106,6 +136,7 @@ class _FakeHotkeyMonitor:
         self.on_release = on_release
         self.started = False
         self.pressed = False
+        self.physical_state: bool | None = None
 
     def start(self) -> None:
         self.started = True
@@ -118,6 +149,9 @@ class _FakeHotkeyMonitor:
 
     def is_pressed(self) -> bool:
         return self.pressed
+
+    def physical_pressed_state(self) -> bool | None:
+        return self.physical_state
 
 
 class _FakeActivityIndicator:
@@ -225,6 +259,94 @@ def test_hotkey_down_shows_recording_indicator(monkeypatch) -> None:
 
     assert daemon.recorder.start_calls == 1
     assert daemon.activity_indicator.show_recording_calls == 1
+
+
+def test_hotkey_down_starts_keydown_warmup_for_cold_backend(monkeypatch) -> None:
+    daemon = _build_daemon(monkeypatch)
+    daemon.transcriber._warm_state = BackendWarmState(
+        resource_mode="in_process",
+        ready=True,
+        warmed=False,
+        warmup_running=False,
+        supports_keydown_warmup=True,
+        last_activity_at_monotonic=None,
+    )
+
+    daemon._on_hotkey_down()
+
+    assert daemon.transcriber.warmup_started.wait(timeout=1.0) is True
+    thread = daemon._keydown_warmup_thread
+    if thread is not None:
+        thread.join(timeout=1.0)
+    assert daemon.transcriber.warmup_calls == 1
+
+
+def test_keydown_warmup_skips_when_backend_is_recently_warm(monkeypatch) -> None:
+    daemon = _build_daemon(monkeypatch)
+    daemon.recorder.is_recording = True
+    daemon.transcriber._warm_state = BackendWarmState(
+        resource_mode="in_process",
+        ready=True,
+        warmed=True,
+        warmup_running=False,
+        supports_keydown_warmup=True,
+        last_activity_at_monotonic=100.0,
+    )
+    monkeypatch.setattr(daemon_module.time, "monotonic", lambda: 150.0)
+
+    daemon._maybe_start_keydown_warmup()
+
+    assert daemon.transcriber.warmup_calls == 0
+    assert daemon._keydown_warmup_thread is None
+
+
+def test_keydown_warmup_does_not_create_duplicate_workers(monkeypatch) -> None:
+    daemon = _build_daemon(monkeypatch)
+    daemon.recorder.is_recording = True
+    daemon.transcriber._warm_state = BackendWarmState(
+        resource_mode="in_process",
+        ready=True,
+        warmed=False,
+        warmup_running=False,
+        supports_keydown_warmup=True,
+        last_activity_at_monotonic=None,
+    )
+    daemon.transcriber.warmup_unblock.clear()
+
+    daemon._maybe_start_keydown_warmup()
+    assert daemon.transcriber.warmup_started.wait(timeout=1.0) is True
+
+    daemon._maybe_start_keydown_warmup()
+
+    thread = daemon._keydown_warmup_thread
+    assert thread is not None
+    daemon.transcriber.warmup_unblock.set()
+    thread.join(timeout=1.0)
+    assert daemon.transcriber.warmup_calls == 1
+
+
+def test_keydown_warmup_aborts_if_recording_stops_before_lock(monkeypatch) -> None:
+    daemon = _build_daemon(monkeypatch)
+    daemon.recorder.is_recording = True
+    daemon.transcriber._warm_state = BackendWarmState(
+        resource_mode="in_process",
+        ready=True,
+        warmed=False,
+        warmup_running=False,
+        supports_keydown_warmup=True,
+        last_activity_at_monotonic=None,
+    )
+    daemon._live_input_lock.acquire()
+
+    daemon._maybe_start_keydown_warmup()
+    thread = daemon._keydown_warmup_thread
+    assert thread is not None
+
+    daemon.recorder.is_recording = False
+    daemon._live_input_lock.release()
+    thread.join(timeout=1.0)
+
+    assert daemon.transcriber.warmup_calls == 0
 
 
 def test_hotkey_up_schedules_delayed_stop(monkeypatch) -> None:
@@ -418,6 +540,39 @@ def test_worker_streaming_skips_already_emitted_prefix(monkeypatch) -> None:
     assert daemon.activity_indicator.hide_calls == 1
 
 
+def test_worker_runs_final_transcription_after_keydown_warmup(monkeypatch) -> None:
+    config = AppConfig()
+    config.audio.release_tail_seconds = 0.0
+    daemon = _build_daemon(monkeypatch, config=config)
+    daemon.recorder.is_recording = True
+    daemon.transcriber._warm_state = BackendWarmState(
+        resource_mode="in_process",
+        ready=True,
+        warmed=False,
+        warmup_running=False,
+        supports_keydown_warmup=True,
+        last_activity_at_monotonic=None,
+    )
+
+    daemon._maybe_start_keydown_warmup()
+    assert daemon.transcriber.warmup_started.wait(timeout=1.0) is True
+    warmup_thread = daemon._keydown_warmup_thread
+    if warmup_thread is not None:
+        warmup_thread.join(timeout=1.0)
+
+    daemon._stop_recording_and_queue_audio(reason="hotkey-release")
+
+    worker = threading.Thread(target=daemon._worker_loop, daemon=True)
+    worker.start()
+    daemon._audio_queue.join()
+    daemon._stop_event.set()
+    worker.join(timeout=1.0)
+
+    assert daemon.transcriber.warmup_calls == 1
+    assert len(daemon.transcriber.calls) == 1
+    assert daemon.injector.injected == ["hello"]
+
+
 def test_worker_waits_for_live_input_lock_before_transcribing(monkeypatch) -> None:
     daemon = _build_daemon(monkeypatch)
     daemon._audio_queue.put(
@@ -488,6 +643,40 @@ def test_recover_missed_hotkey_release_stops_recording(monkeypatch) -> None:
     daemon._recover_missed_hotkey_release_if_needed()
     assert daemon.recorder.stop_calls == 1
     assert daemon._audio_queue.qsize() == 1
+
+
+def test_recover_missed_hotkey_release_prefers_physical_pressed_state(monkeypatch) -> None:
+    daemon = _build_daemon(monkeypatch)
+    daemon.recorder.is_recording = True
+    daemon.hotkey.pressed = False
+    daemon.hotkey.physical_state = True
+
+    monotonic_values = iter([1.0, 1.4])
+    monkeypatch.setattr(daemon_module.time, "monotonic", lambda: next(monotonic_values))
+
+    daemon._recover_missed_hotkey_release_if_needed()
+    daemon._recover_missed_hotkey_release_if_needed()
+
+    assert daemon.recorder.stop_calls == 0
+    assert daemon._audio_queue.qsize() == 0
+
+
+def test_recover_missed_hotkey_release_does_not_override_listener_pressed_with_physical_false(
+    monkeypatch,
+) -> None:
+    daemon = _build_daemon(monkeypatch)
+    daemon.recorder.is_recording = True
+    daemon.hotkey.pressed = True
+    daemon.hotkey.physical_state = False
+
+    monotonic_values = iter([1.0, 1.4])
+    monkeypatch.setattr(daemon_module.time, "monotonic", lambda: next(monotonic_values))
+
+    daemon._recover_missed_hotkey_release_if_needed()
+    daemon._recover_missed_hotkey_release_if_needed()
+
+    assert daemon.recorder.stop_calls == 0
+    assert daemon._audio_queue.qsize() == 0
 
 
 def test_append_only_delta_tolerates_non_monotonic_tail() -> None:
@@ -600,6 +789,39 @@ def test_stop_recording_falls_back_when_live_lock_is_busy(monkeypatch) -> None:
     item = daemon._audio_queue.get_nowait()
     assert daemon.recorder.stop_calls == 1
     assert item.emitted_prefix == "latest-prefix"
+
+
+def test_stop_recording_logs_info_when_keydown_warmup_holds_lock(monkeypatch, caplog) -> None:
+    config = AppConfig()
+    config.audio.release_tail_seconds = 0.0
+    daemon = _build_daemon(monkeypatch, config=config)
+    daemon.recorder.is_recording = True
+    daemon.transcriber._warm_state = BackendWarmState(
+        resource_mode="in_process",
+        ready=True,
+        warmed=False,
+        warmup_running=False,
+        supports_keydown_warmup=True,
+        last_activity_at_monotonic=None,
+    )
+
+    monkeypatch.setattr(daemon_module, "_LIVE_INPUT_STOP_LOCK_TIMEOUT_SECONDS", 0.01)
+    daemon.transcriber.warmup_unblock.clear()
+    daemon._maybe_start_keydown_warmup()
+    assert daemon.transcriber.warmup_started.wait(timeout=1.0) is True
+
+    with caplog.at_level(logging.INFO, logger=daemon_module.__name__):
+        daemon._stop_recording_and_queue_audio(reason="hotkey-release-reconciled")
+
+    daemon.transcriber.warmup_unblock.set()
+    thread = daemon._keydown_warmup_thread
+    if thread is not None:
+        thread.join(timeout=1.0)
+
+    assert any(
+        "Keydown warmup still held transcriber lock during stop" in entry.message
+        for entry in caplog.records
+    )
 
 
 def test_stop_recording_force_closes_recorder_when_stop_fails(monkeypatch) -> None:

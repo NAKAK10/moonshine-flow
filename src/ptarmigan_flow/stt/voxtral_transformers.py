@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
 
+from ptarmigan_flow.ports.runtime import BackendWarmState, format_backend_warm_state
 from ptarmigan_flow.stt.base import SpeechToTextBackend
 from ptarmigan_flow.stt.realtime_capability import supports_realtime_input_model
 from ptarmigan_flow.text_processing.interfaces import NoopTextPostProcessor, TextPostProcessor
@@ -38,6 +40,7 @@ class VoxtralTransformersSTTBackend(SpeechToTextBackend):
         self._processor: Any | None = None
         self._model: Any | None = None
         self._target_sample_rate = 16000
+        self._last_activity_at_monotonic: float | None = None
 
     @staticmethod
     def _ensure_dependencies() -> tuple[Any, Any]:
@@ -117,6 +120,7 @@ class VoxtralTransformersSTTBackend(SpeechToTextBackend):
         outputs = self._model.generate(**inputs)
         decoded_outputs = self._processor.batch_decode(outputs, skip_special_tokens=True)
         text = decoded_outputs[0] if decoded_outputs else ""
+        self._last_activity_at_monotonic = time.monotonic()
         normalized = normalize_transcript_text(str(text))
         if not normalized:
             return ""
@@ -130,11 +134,28 @@ class VoxtralTransformersSTTBackend(SpeechToTextBackend):
     def supports_realtime_input(self) -> bool:
         return supports_realtime_input_model(self._settings.model_id)
 
+    def warm_state(self) -> BackendWarmState:
+        ready = self._processor is not None and self._model is not None
+        return BackendWarmState(
+            resource_mode="in_process",
+            ready=ready,
+            warmed=self._last_activity_at_monotonic is not None,
+            warmup_running=False,
+            supports_keydown_warmup=False,
+            last_activity_at_monotonic=self._last_activity_at_monotonic,
+        )
+
+    def warmup_for_low_latency(self) -> None:
+        return None
+
     def maybe_release_idle_resources(self) -> None:
         return None
 
     def runtime_status(self) -> str:
-        return f"🚀 Backend ready (no external server): {self.backend_summary()}"
+        return (
+            "🚀 Backend ready (no external server): "
+            f"{self.backend_summary()} {format_backend_warm_state(self.warm_state())}"
+        )
 
     @staticmethod
     def _to_mono_float32(audio: np.ndarray) -> np.ndarray:
@@ -189,3 +210,4 @@ class VoxtralTransformersSTTBackend(SpeechToTextBackend):
     def close(self) -> None:
         self._model = None
         self._processor = None
+        self._last_activity_at_monotonic = None

@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
 
+from ptarmigan_flow.ports.runtime import BackendWarmState, format_backend_warm_state
 from ptarmigan_flow.stt.base import SpeechToTextBackend
 from ptarmigan_flow.text_processing.interfaces import NoopTextPostProcessor, TextPostProcessor
 from ptarmigan_flow.text_processing.normalizer import normalize_transcript_text
@@ -41,6 +43,7 @@ class GraniteTransformersSTTBackend(SpeechToTextBackend):
         self._model: Any | None = None
         self._torch: Any | None = None
         self._target_sample_rate = 16000
+        self._last_activity_at_monotonic: float | None = None
 
     @staticmethod
     def _ensure_dependencies() -> tuple[Any, Any, Any]:
@@ -122,6 +125,7 @@ class GraniteTransformersSTTBackend(SpeechToTextBackend):
         model_inputs = self._move_inputs_to_runtime(model_inputs)
         model_outputs = self._generate(model_inputs)
         output_text = self._decode_generated(model_outputs, model_inputs)
+        self._last_activity_at_monotonic = time.monotonic()
         normalized = normalize_transcript_text(output_text)
         if not normalized:
             return ""
@@ -135,11 +139,28 @@ class GraniteTransformersSTTBackend(SpeechToTextBackend):
     def supports_realtime_input(self) -> bool:
         return False
 
+    def warm_state(self) -> BackendWarmState:
+        ready = self._processor is not None and self._model is not None and self._tokenizer is not None
+        return BackendWarmState(
+            resource_mode="in_process",
+            ready=ready,
+            warmed=self._last_activity_at_monotonic is not None,
+            warmup_running=False,
+            supports_keydown_warmup=False,
+            last_activity_at_monotonic=self._last_activity_at_monotonic,
+        )
+
+    def warmup_for_low_latency(self) -> None:
+        return None
+
     def maybe_release_idle_resources(self) -> None:
         return None
 
     def runtime_status(self) -> str:
-        return f"🚀 Backend ready (no external server): {self.backend_summary()}"
+        return (
+            "🚀 Backend ready (no external server): "
+            f"{self.backend_summary()} {format_backend_warm_state(self.warm_state())}"
+        )
 
     @staticmethod
     def _build_prompt(tokenizer: Any) -> str:
@@ -281,3 +302,4 @@ class GraniteTransformersSTTBackend(SpeechToTextBackend):
         self._tokenizer = None
         self._model = None
         self._torch = None
+        self._last_activity_at_monotonic = None

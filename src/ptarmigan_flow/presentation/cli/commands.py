@@ -1021,7 +1021,7 @@ def cmd_list_devices(args: argparse.Namespace) -> int:
     if selected == 0:
         config.audio.input_device = None
     else:
-        config.audio.input_device = int(devices[selected - 1]["index"])
+        config.audio.input_device = str(devices[selected - 1]["name"])
 
     write_config(config_path, config)
     print(_green(f"Updated config: {config_path}"))

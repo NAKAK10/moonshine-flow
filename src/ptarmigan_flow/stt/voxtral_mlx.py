@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+import time
 import wave
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -11,6 +12,7 @@ from typing import Any
 
 import numpy as np
 
+from ptarmigan_flow.ports.runtime import BackendWarmState, format_backend_warm_state
 from ptarmigan_flow.stt.base import SpeechToTextBackend
 from ptarmigan_flow.stt.model_families import resolve_voxtral_mlx_model_id
 from ptarmigan_flow.stt.realtime_capability import supports_realtime_input_model
@@ -47,6 +49,7 @@ class VoxtralMLXSTTBackend(SpeechToTextBackend):
         self._prompt_tokens: list[int] = []
         self._n_delay_tokens = 6
         self._resolved_model_id = self._resolve_model_id(settings.model_id)
+        self._last_activity_at_monotonic: float | None = None
 
     @staticmethod
     def _ensure_dependencies() -> tuple[Any, Any, Any]:
@@ -125,6 +128,7 @@ class VoxtralMLXSTTBackend(SpeechToTextBackend):
             output_tokens,
             special_token_policy=self._special_token_policy.IGNORE,
         )
+        self._last_activity_at_monotonic = time.monotonic()
         normalized = normalize_transcript_text(str(text))
         if not normalized:
             return ""
@@ -140,11 +144,27 @@ class VoxtralMLXSTTBackend(SpeechToTextBackend):
             self._settings.model_id
         ) or supports_realtime_input_model(self._resolved_model_id)
 
+    def warm_state(self) -> BackendWarmState:
+        return BackendWarmState(
+            resource_mode="in_process",
+            ready=self._ready,
+            warmed=self._last_activity_at_monotonic is not None,
+            warmup_running=False,
+            supports_keydown_warmup=False,
+            last_activity_at_monotonic=self._last_activity_at_monotonic,
+        )
+
+    def warmup_for_low_latency(self) -> None:
+        return None
+
     def maybe_release_idle_resources(self) -> None:
         return None
 
     def runtime_status(self) -> str:
-        return f"🚀 Backend ready (no external server): {self.backend_summary()}"
+        return (
+            "🚀 Backend ready (no external server): "
+            f"{self.backend_summary()} {format_backend_warm_state(self.warm_state())}"
+        )
 
     def _prepare_temp_wav(self, audio: np.ndarray, *, sample_rate: int) -> str:
         mono = self._to_mono_float32(audio)
@@ -200,3 +220,4 @@ class VoxtralMLXSTTBackend(SpeechToTextBackend):
         self._special_token_policy = None
         self._prompt_tokens = []
         self._ready = False
+        self._last_activity_at_monotonic = None

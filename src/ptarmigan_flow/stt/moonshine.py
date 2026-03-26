@@ -6,6 +6,7 @@ from collections.abc import Iterator
 
 import numpy as np
 
+from ptarmigan_flow.ports.runtime import format_backend_warm_state
 from ptarmigan_flow.stt.base import SpeechToTextBackend
 from ptarmigan_flow.transcriber import MoonshineTranscriber
 
@@ -25,4 +26,7 @@ class MoonshineSTTBackend(MoonshineTranscriber, SpeechToTextBackend):
         return None
 
     def runtime_status(self) -> str:
-        return f"🚀 Backend ready (no external server): {self.backend_summary()}"
+        return (
+            "🚀 Backend ready (no external server): "
+            f"{self.backend_summary()} {format_backend_warm_state(self.warm_state())}"
+        )
