@@ -11,12 +11,21 @@ def _config(
     *,
     trailing_silence_seconds: float = 1.0,
     idle_shutdown_seconds: float = 30.0,
+    max_record_seconds: int = 30,
+    startup_preset: str = "off",
 ):
     return SimpleNamespace(
-        stt=SimpleNamespace(model=model_token, idle_shutdown_seconds=idle_shutdown_seconds),
+        stt=SimpleNamespace(
+            model=model_token,
+            idle_shutdown_seconds=idle_shutdown_seconds,
+            vllm=SimpleNamespace(startup_preset=startup_preset),
+        ),
         language="ja",
         model=SimpleNamespace(device="mps"),
-        audio=SimpleNamespace(trailing_silence_seconds=trailing_silence_seconds),
+        audio=SimpleNamespace(
+            trailing_silence_seconds=trailing_silence_seconds,
+            max_record_seconds=max_record_seconds,
+        ),
     )
 
 
@@ -51,6 +60,38 @@ def test_create_stt_backend_builds_vllm_backend() -> None:
     assert backend.__class__.__name__ == "VLLMRealtimeSTTBackend"
     assert backend._settings.trailing_silence_seconds == 0.0
     assert backend._settings.idle_shutdown_seconds == 30.0
+    assert backend._settings.startup_preset == "off"
+    assert backend._settings.max_model_len == 2048
+
+
+def test_create_stt_backend_propagates_vllm_startup_preset() -> None:
+    backend = create_stt_backend(
+        _config(
+            "vllm:mistralai/Voxtral-Mini-4B-Realtime-2602",
+            startup_preset="balanced",
+        )
+    )
+    assert backend._settings.startup_preset == "balanced"
+
+
+def test_create_stt_backend_derives_vllm_max_model_len_for_60_seconds() -> None:
+    backend = create_stt_backend(
+        _config(
+            "vllm:mistralai/Voxtral-Mini-4B-Realtime-2602",
+            max_record_seconds=60,
+        )
+    )
+    assert backend._settings.max_model_len == 4096
+
+
+def test_create_stt_backend_derives_vllm_max_model_len_above_60_seconds() -> None:
+    backend = create_stt_backend(
+        _config(
+            "vllm:mistralai/Voxtral-Mini-4B-Realtime-2602",
+            max_record_seconds=61,
+        )
+    )
+    assert backend._settings.max_model_len == 8192
 
 
 def test_create_stt_backend_builds_granite_transformers_backend(monkeypatch) -> None:

@@ -23,12 +23,25 @@ def _find_open_port() -> int:
         return int(sock.getsockname()[1])
 
 
+def _startup_preset_flags(startup_preset: str) -> list[str]:
+    normalized = startup_preset.strip().lower()
+    if normalized == "off":
+        return []
+    if normalized == "balanced":
+        return ["-O1"]
+    if normalized == "fastest":
+        return ["-O0", "--enforce-eager"]
+    raise ValueError(f"Unsupported vLLM startup preset: {startup_preset}")
+
+
 @dataclass(slots=True)
 class VLLMServerConfig:
     host: str = "127.0.0.1"
     startup_timeout_seconds: float = 120.0
     health_poll_interval_seconds: float = 0.5
     log_tail_lines: int = 80
+    startup_preset: str = "off"
+    max_model_len: int | None = None
 
 
 class VLLMServerManager:
@@ -101,7 +114,12 @@ class VLLMServerManager:
 
     def _start(self, model_id: str) -> None:
         port = _find_open_port()
-        command = self._build_command(model_id=model_id, port=port)
+        command = self._build_command(
+            model_id=model_id,
+            port=port,
+            startup_preset=self._config.startup_preset,
+            max_model_len=self._config.max_model_len,
+        )
         LOGGER.info("🚀 Starting local vLLM server: %s", " ".join(command))
         process = subprocess.Popen(
             command,
@@ -121,10 +139,16 @@ class VLLMServerManager:
             raise
 
     @staticmethod
-    def _build_command(*, model_id: str, port: int) -> list[str]:
+    def _build_command(
+        *,
+        model_id: str,
+        port: int,
+        startup_preset: str = "off",
+        max_model_len: int | None = None,
+    ) -> list[str]:
         vllm_bin = shutil.which("vllm")
         if vllm_bin:
-            return [
+            command = [
                 vllm_bin,
                 "serve",
                 model_id,
@@ -133,17 +157,22 @@ class VLLMServerManager:
                 "--port",
                 str(port),
             ]
-        return [
-            sys.executable,
-            "-m",
-            "vllm.entrypoints.openai.api_server",
-            "--model",
-            model_id,
-            "--host",
-            "127.0.0.1",
-            "--port",
-            str(port),
-        ]
+        else:
+            command = [
+                sys.executable,
+                "-m",
+                "vllm.entrypoints.openai.api_server",
+                "--model",
+                model_id,
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(port),
+            ]
+        if max_model_len is not None and max_model_len > 0:
+            command.extend(["--max-model-len", str(max_model_len)])
+        command.extend(_startup_preset_flags(startup_preset))
+        return command
 
     def _wait_until_ready(self, process: subprocess.Popen[str]) -> None:
         deadline = time.monotonic() + self._config.startup_timeout_seconds

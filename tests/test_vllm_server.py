@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import logging
 
+import pytest
+
 import ptarmigan_flow.stt.server as server_module
 
 
@@ -150,3 +152,88 @@ def test_start_logs_rocket_icon(monkeypatch, caplog) -> None:
         manager._start("mistralai/Voxtral-Mini-4B-Realtime-2602")
 
     assert any("🚀 Starting local vLLM server" in entry.message for entry in caplog.records)
+
+
+@pytest.mark.parametrize(
+    ("startup_preset", "max_model_len", "expected_suffix"),
+    [
+        ("off", 2048, ["--max-model-len", "2048"]),
+        ("balanced", 4096, ["--max-model-len", "4096", "-O1"]),
+        ("fastest", 8192, ["--max-model-len", "8192", "-O0", "--enforce-eager"]),
+    ],
+)
+def test_build_command_uses_vllm_binary_when_available(
+    monkeypatch,
+    startup_preset: str,
+    max_model_len: int,
+    expected_suffix: list[str],
+) -> None:
+    monkeypatch.setattr(server_module.shutil, "which", lambda _name: "/tmp/vllm")
+
+    command = server_module.VLLMServerManager._build_command(
+        model_id="mistralai/Voxtral-Mini-4B-Realtime-2602",
+        port=8000,
+        startup_preset=startup_preset,
+        max_model_len=max_model_len,
+    )
+
+    assert command == [
+        "/tmp/vllm",
+        "serve",
+        "mistralai/Voxtral-Mini-4B-Realtime-2602",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8000",
+        *expected_suffix,
+    ]
+
+
+@pytest.mark.parametrize(
+    ("startup_preset", "max_model_len", "expected_suffix"),
+    [
+        ("off", 2048, ["--max-model-len", "2048"]),
+        ("balanced", 4096, ["--max-model-len", "4096", "-O1"]),
+        ("fastest", 8192, ["--max-model-len", "8192", "-O0", "--enforce-eager"]),
+    ],
+)
+def test_build_command_falls_back_to_python_module_when_vllm_binary_missing(
+    monkeypatch,
+    startup_preset: str,
+    max_model_len: int,
+    expected_suffix: list[str],
+) -> None:
+    monkeypatch.setattr(server_module.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(server_module.sys, "executable", "/tmp/python")
+
+    command = server_module.VLLMServerManager._build_command(
+        model_id="mistralai/Voxtral-Mini-4B-Realtime-2602",
+        port=8000,
+        startup_preset=startup_preset,
+        max_model_len=max_model_len,
+    )
+
+    assert command == [
+        "/tmp/python",
+        "-m",
+        "vllm.entrypoints.openai.api_server",
+        "--model",
+        "mistralai/Voxtral-Mini-4B-Realtime-2602",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8000",
+        *expected_suffix,
+    ]
+
+
+def test_build_command_rejects_unknown_startup_preset(monkeypatch) -> None:
+    monkeypatch.setattr(server_module.shutil, "which", lambda _name: "/tmp/vllm")
+
+    with pytest.raises(ValueError, match="Unsupported vLLM startup preset"):
+        server_module.VLLMServerManager._build_command(
+            model_id="mistralai/Voxtral-Mini-4B-Realtime-2602",
+            port=8000,
+            startup_preset="unknown",
+            max_model_len=2048,
+        )

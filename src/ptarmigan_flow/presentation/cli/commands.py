@@ -39,7 +39,13 @@ from ptarmigan_flow.application.use_cases.llm_runtime import (
 from ptarmigan_flow.application.use_cases.load_corrections import (
     load_corrections_with_diagnostics as load_corrections_with_diagnostics_use_case,
 )
-from ptarmigan_flow.config import InputDevicePolicy, default_config_path, load_config, write_config
+from ptarmigan_flow.config import (
+    InputDevicePolicy,
+    VLLMStartupPreset,
+    default_config_path,
+    load_config,
+    write_config,
+)
 from ptarmigan_flow.launchd import (
     LAUNCH_AGENT_LABEL,
     consume_restart_permission_suppression,
@@ -349,6 +355,49 @@ def _prompt_choice(label: str, default: str, choices: list[str]) -> str:
         print(f"Please choose a number between 1 and {len(choices)}.")
 
 
+def _prompt_choice_with_descriptions(
+    label: str,
+    default: str,
+    choices: list[tuple[str, str]],
+    *,
+    note: str | None = None,
+) -> str:
+    if not choices:
+        raise ValueError("choices must not be empty")
+
+    values = [value for value, _description in choices]
+    allowed = {value.lower(): value for value in values}
+    default_index = 1
+    for idx, value in enumerate(values, start=1):
+        if value == default:
+            default_index = idx
+            break
+
+    while True:
+        print(f"{label} {_dim(f'(current: {default})')}")
+        if note:
+            print(_dim(note))
+        for idx, (value, description) in enumerate(choices, start=1):
+            marker = _dim(" (current)") if value == default else ""
+            print(f"  {idx}. {value}{marker}")
+            print(f"     {description}")
+
+        raw = input(f"Select number [{default_index}]: ").strip()
+        if raw == "":
+            _print_keep(default)
+            return default
+        if raw.isdigit():
+            selected = int(raw)
+            if 1 <= selected <= len(choices):
+                return values[selected - 1]
+            print(f"Please choose a number between 1 and {len(choices)}.")
+            continue
+        choice = allowed.get(raw.lower())
+        if choice is not None:
+            return choice
+        print(f"Please choose a number between 1 and {len(choices)}.")
+
+
 def _prompt_int(
     label: str,
     default: int,
@@ -443,6 +492,33 @@ def _prompt_input_device_policy(default: object) -> str:
     if default_text not in choices:
         default_text = InputDevicePolicy.PLAYBACK_FRIENDLY.value
     return _prompt_choice("audio.input_device_policy", default_text, choices)
+
+
+def _prompt_vllm_startup_preset(default: object) -> str:
+    default_text = str(getattr(default, "value", default)).strip().lower()
+    choices = [
+        (
+            VLLMStartupPreset.OFF.value,
+            "Current behavior. No startup optimization; safest steady-state behavior.",
+        ),
+        (
+            VLLMStartupPreset.BALANCED.value,
+            "Faster cold start. Small steady-state tradeoff.",
+        ),
+        (
+            VLLMStartupPreset.FASTEST.value,
+            "Shortest cold start. Largest steady-state tradeoff.",
+        ),
+    ]
+    values = [value for value, _description in choices]
+    if default_text not in values:
+        default_text = VLLMStartupPreset.OFF.value
+    return _prompt_choice_with_descriptions(
+        "stt.vllm.startup_preset",
+        default_text,
+        choices,
+        note="Stored always. Used only when stt.model is vllm:...",
+    )
 
 
 def _query_input_devices() -> tuple[list[dict[str, Any]], int | None]:
@@ -1169,172 +1245,259 @@ def _prompt_stt_model(current: str) -> str:
         return token
 
 
-def cmd_init(args: argparse.Namespace) -> int:
-    if not _is_interactive_session():
-        print("`pflow init` requires an interactive terminal.", file=sys.stderr)
-        return 2
+def _edit_hotkey_section(config: object) -> None:
+    config.hotkey.key = _prompt_text("hotkey.key", config.hotkey.key)
 
-    config_path = _resolve_config_path(args.config)
-    config = load_config(config_path, allow_legacy_model_size=True)
 
+def _edit_audio_section(config: object) -> None:
+    config.audio.sample_rate = _prompt_int("audio.sample_rate", config.audio.sample_rate, minimum=1)
+    config.audio.channels = _prompt_int("audio.channels", config.audio.channels, minimum=1)
+    config.audio.dtype = _prompt_text("audio.dtype", config.audio.dtype)
+    config.audio.max_record_seconds = _prompt_int(
+        "audio.max_record_seconds",
+        config.audio.max_record_seconds,
+        minimum=1,
+    )
+    config.audio.release_tail_seconds = _prompt_float(
+        "audio.release_tail_seconds",
+        float(config.audio.release_tail_seconds),
+        minimum=0.0,
+        maximum=1.0,
+    )
+    config.audio.hotkey_release_reconcile_seconds = _prompt_float(
+        "audio.hotkey_release_reconcile_seconds",
+        float(config.audio.hotkey_release_reconcile_seconds),
+        minimum=0.0,
+    )
+    config.audio.hotkey_idle_reconcile_seconds = _prompt_float(
+        "audio.hotkey_idle_reconcile_seconds",
+        float(config.audio.hotkey_idle_reconcile_seconds),
+        minimum=0.0,
+    )
+    config.audio.trailing_silence_seconds = _prompt_float(
+        "audio.trailing_silence_seconds",
+        float(config.audio.trailing_silence_seconds),
+        minimum=0.0,
+        maximum=1.0,
+    )
+    config.audio.input_device = _prompt_input_device(config.audio.input_device)
+    selected_input_device_policy = _prompt_input_device_policy(config.audio.input_device_policy)
+    config.audio.input_device_policy = type(config.audio.input_device_policy)(
+        selected_input_device_policy
+    )
+
+
+def _edit_stt_section(config: object) -> None:
+    config.stt.model = _prompt_stt_model(config.stt.model)
+    config.stt.idle_shutdown_seconds = _prompt_float(
+        "stt.idle_shutdown_seconds",
+        float(config.stt.idle_shutdown_seconds),
+        minimum=0.0,
+    )
+    selected_vllm_startup_preset = _prompt_vllm_startup_preset(
+        config.stt.vllm.startup_preset
+    )
+    config.stt.vllm.startup_preset = type(config.stt.vllm.startup_preset)(
+        selected_vllm_startup_preset
+    )
+
+
+def _edit_language_section(config: object) -> None:
+    config.language = _prompt_text("language", config.language)
+
+
+def _edit_model_section(config: object) -> None:
+    config.model.device = _prompt_text("model.device", config.model.device)
+
+
+def _edit_output_section(config: object) -> None:
+    output_mode_choices = [mode.value for mode in type(config.output.mode)]
+    selected_output_mode = _prompt_choice(
+        "output.mode",
+        config.output.mode.value,
+        output_mode_choices,
+    )
+    config.output.mode = type(config.output.mode)(selected_output_mode)
+    config.output.paste_shortcut = _prompt_text("output.paste_shortcut", config.output.paste_shortcut)
+
+
+def _edit_runtime_section(config: object) -> None:
+    config.runtime.log_level = _prompt_text("runtime.log_level", config.runtime.log_level)
+    config.runtime.notify_on_error = _prompt_bool(
+        "runtime.notify_on_error",
+        bool(config.runtime.notify_on_error),
+    )
+    config.runtime.ui_enabled = _prompt_bool(
+        "runtime.ui_enabled",
+        bool(config.runtime.ui_enabled),
+    )
+    config.runtime.activity_indicator_enabled = _prompt_bool(
+        "runtime.activity_indicator_enabled",
+        bool(config.runtime.activity_indicator_enabled),
+    )
+    config.runtime.activity_indicator_margin_right = _prompt_int(
+        "runtime.activity_indicator_margin_right",
+        int(config.runtime.activity_indicator_margin_right),
+        minimum=0,
+    )
+    config.runtime.activity_indicator_margin_bottom = _prompt_int(
+        "runtime.activity_indicator_margin_bottom",
+        int(config.runtime.activity_indicator_margin_bottom),
+        minimum=0,
+    )
+    config.runtime.activity_indicator_size = _prompt_int(
+        "runtime.activity_indicator_size",
+        int(config.runtime.activity_indicator_size),
+        minimum=16,
+    )
+
+
+def _edit_text_section(config: object) -> None:
+    config.text.dictionary_path = _prompt_optional_text(
+        "text.dictionary_path",
+        config.text.dictionary_path,
+    )
+
+    llm_mode_choices = [mode.value for mode in type(config.text.llm_correction.mode)]
+    selected_llm_mode = _prompt_choice(
+        "text.llm_correction.mode",
+        config.text.llm_correction.mode.value,
+        llm_mode_choices,
+    )
+    config.text.llm_correction.mode = type(config.text.llm_correction.mode)(selected_llm_mode)
+
+    known_llm_providers = ["ollama", "lmstudio"]
+    current_llm_provider = str(config.text.llm_correction.provider).strip().lower()
+    provider_default = (
+        current_llm_provider if current_llm_provider in known_llm_providers else "other"
+    )
+    selected_llm_provider = _prompt_choice(
+        "text.llm_correction.provider",
+        provider_default,
+        known_llm_providers + ["other"],
+    )
+    if selected_llm_provider == "other":
+        other_default = (
+            current_llm_provider
+            if current_llm_provider and current_llm_provider not in known_llm_providers
+            else ""
+        )
+        while True:
+            provider_other = _prompt_text(
+                "text.llm_correction.provider_other",
+                other_default,
+            ).strip()
+            if provider_other:
+                config.text.llm_correction.provider = provider_other
+                break
+            print("Provider cannot be empty.")
+    else:
+        config.text.llm_correction.provider = selected_llm_provider
+    config.text.llm_correction.base_url = _prompt_text(
+        "text.llm_correction.base_url",
+        config.text.llm_correction.base_url,
+    )
+    config.text.llm_correction.model = _prompt_text(
+        "text.llm_correction.model",
+        config.text.llm_correction.model,
+    )
+    config.text.llm_correction.timeout_seconds = _prompt_float(
+        "text.llm_correction.timeout_seconds",
+        float(config.text.llm_correction.timeout_seconds),
+        minimum=0.5,
+        maximum=5.0,
+    )
+    config.text.llm_correction.max_input_chars = _prompt_int(
+        "text.llm_correction.max_input_chars",
+        int(config.text.llm_correction.max_input_chars),
+        minimum=50,
+        maximum=5000,
+    )
+    config.text.llm_correction.api_key = _prompt_optional_secret(
+        "text.llm_correction.api_key",
+        _normalize_optional_secret(config.text.llm_correction.api_key),
+    )
+    config.text.llm_correction.enabled_tools = _prompt_bool(
+        "text.llm_correction.enabled_tools",
+        bool(config.text.llm_correction.enabled_tools),
+    )
+
+
+def _edit_all_config_sections(config: object) -> None:
+    _edit_hotkey_section(config)
+    _edit_audio_section(config)
+    _edit_stt_section(config)
+    _edit_language_section(config)
+    _edit_model_section(config)
+    _edit_output_section(config)
+    _edit_runtime_section(config)
+    _edit_text_section(config)
+
+
+def _config_section_specs() -> list[tuple[str, str, Callable[[object], None]]]:
+    return [
+        ("hotkey", "Edit hotkey trigger settings", _edit_hotkey_section),
+        ("audio", "Edit recording and input device settings", _edit_audio_section),
+        ("language", "Edit transcription language", _edit_language_section),
+        ("stt", "Edit STT backend and model settings", _edit_stt_section),
+        ("model", "Edit model execution device", _edit_model_section),
+        ("output", "Edit output typing and paste settings", _edit_output_section),
+        ("runtime", "Edit runtime UI and logging settings", _edit_runtime_section),
+        ("text", "Edit dictionary and LLM correction settings", _edit_text_section),
+        ("all", "Edit the full config", _edit_all_config_sections),
+    ]
+
+
+def _config_section_help_items() -> list[tuple[str, str]]:
+    return [(name, description) for name, description, _editor in _config_section_specs()]
+
+
+def _resolve_config_section_editor(section_name: str) -> Callable[[object], None] | None:
+    normalized = section_name.strip().lower()
+    for name, _description, editor in _config_section_specs():
+        if name == normalized:
+            return editor
+    return None
+
+
+def _prompt_config_section() -> str:
+    specs = _config_section_specs()
+    names = [name for name, _description, _editor in specs]
+    print("Select config section to edit:")
+    for index, (name, description, _editor) in enumerate(specs, start=1):
+        print(f"  {index}. {name} - {description}")
+    while True:
+        raw = input(f"Select number [1-{len(specs)}]: ").strip()
+        if raw.isdigit():
+            selected = int(raw)
+            if 1 <= selected <= len(specs):
+                return names[selected - 1]
+        else:
+            lowered = raw.lower()
+            if lowered in names:
+                return lowered
+        print(f"Please choose a number between 1 and {len(specs)}.")
+
+
+def _print_config_editor_intro(config_path: Path) -> None:
     print(f"Config: {config_path}")
     print("Press Enter to keep current values. Use '-' to unset optional fields.")
     print(_dim("(current: ...) and keep lines are shown in dim text."))
     print("")
+
+
+def _run_config_editor(*, config_path: Path, section_name: str | None) -> int:
+    config = load_config(config_path, allow_legacy_model_size=True)
+    _print_config_editor_intro(config_path)
     try:
-        config.hotkey.key = _prompt_text("hotkey.key", config.hotkey.key)
-
-        config.audio.sample_rate = _prompt_int("audio.sample_rate", config.audio.sample_rate, minimum=1)
-        config.audio.channels = _prompt_int("audio.channels", config.audio.channels, minimum=1)
-        config.audio.dtype = _prompt_text("audio.dtype", config.audio.dtype)
-        config.audio.max_record_seconds = _prompt_int(
-            "audio.max_record_seconds",
-            config.audio.max_record_seconds,
-            minimum=1,
-        )
-        config.audio.release_tail_seconds = _prompt_float(
-            "audio.release_tail_seconds",
-            float(config.audio.release_tail_seconds),
-            minimum=0.0,
-            maximum=1.0,
-        )
-        config.audio.hotkey_release_reconcile_seconds = _prompt_float(
-            "audio.hotkey_release_reconcile_seconds",
-            float(config.audio.hotkey_release_reconcile_seconds),
-            minimum=0.0,
-        )
-        config.audio.hotkey_idle_reconcile_seconds = _prompt_float(
-            "audio.hotkey_idle_reconcile_seconds",
-            float(config.audio.hotkey_idle_reconcile_seconds),
-            minimum=0.0,
-        )
-        config.audio.trailing_silence_seconds = _prompt_float(
-            "audio.trailing_silence_seconds",
-            float(config.audio.trailing_silence_seconds),
-            minimum=0.0,
-            maximum=1.0,
-        )
-        config.audio.input_device = _prompt_input_device(config.audio.input_device)
-        selected_input_device_policy = _prompt_input_device_policy(config.audio.input_device_policy)
-        config.audio.input_device_policy = type(config.audio.input_device_policy)(
-            selected_input_device_policy
-        )
-
-        config.stt.model = _prompt_stt_model(config.stt.model)
-        config.stt.idle_shutdown_seconds = _prompt_float(
-            "stt.idle_shutdown_seconds",
-            float(config.stt.idle_shutdown_seconds),
-            minimum=0.0,
-        )
-        config.language = _prompt_text("language", config.language)
-        config.model.device = _prompt_text("model.device", config.model.device)
-
-        output_mode_choices = [mode.value for mode in type(config.output.mode)]
-        selected_output_mode = _prompt_choice(
-            "output.mode",
-            config.output.mode.value,
-            output_mode_choices,
-        )
-        config.output.mode = type(config.output.mode)(selected_output_mode)
-        config.output.paste_shortcut = _prompt_text("output.paste_shortcut", config.output.paste_shortcut)
-
-        config.runtime.log_level = _prompt_text("runtime.log_level", config.runtime.log_level)
-        config.runtime.notify_on_error = _prompt_bool(
-            "runtime.notify_on_error",
-            bool(config.runtime.notify_on_error),
-        )
-        config.runtime.ui_enabled = _prompt_bool(
-            "runtime.ui_enabled",
-            bool(config.runtime.ui_enabled),
-        )
-        config.runtime.activity_indicator_enabled = _prompt_bool(
-            "runtime.activity_indicator_enabled",
-            bool(config.runtime.activity_indicator_enabled),
-        )
-        config.runtime.activity_indicator_margin_right = _prompt_int(
-            "runtime.activity_indicator_margin_right",
-            int(config.runtime.activity_indicator_margin_right),
-            minimum=0,
-        )
-        config.runtime.activity_indicator_margin_bottom = _prompt_int(
-            "runtime.activity_indicator_margin_bottom",
-            int(config.runtime.activity_indicator_margin_bottom),
-            minimum=0,
-        )
-        config.runtime.activity_indicator_size = _prompt_int(
-            "runtime.activity_indicator_size",
-            int(config.runtime.activity_indicator_size),
-            minimum=16,
-        )
-
-        config.text.dictionary_path = _prompt_optional_text(
-            "text.dictionary_path",
-            config.text.dictionary_path,
-        )
-
-        llm_mode_choices = [mode.value for mode in type(config.text.llm_correction.mode)]
-        selected_llm_mode = _prompt_choice(
-            "text.llm_correction.mode",
-            config.text.llm_correction.mode.value,
-            llm_mode_choices,
-        )
-        config.text.llm_correction.mode = type(config.text.llm_correction.mode)(selected_llm_mode)
-
-        known_llm_providers = ["ollama", "lmstudio"]
-        current_llm_provider = str(config.text.llm_correction.provider).strip().lower()
-        provider_default = (
-            current_llm_provider if current_llm_provider in known_llm_providers else "other"
-        )
-        selected_llm_provider = _prompt_choice(
-            "text.llm_correction.provider",
-            provider_default,
-            known_llm_providers + ["other"],
-        )
-        if selected_llm_provider == "other":
-            other_default = (
-                current_llm_provider
-                if current_llm_provider and current_llm_provider not in known_llm_providers
-                else ""
-            )
-            while True:
-                provider_other = _prompt_text(
-                    "text.llm_correction.provider_other",
-                    other_default,
-                ).strip()
-                if provider_other:
-                    config.text.llm_correction.provider = provider_other
-                    break
-                print("Provider cannot be empty.")
-        else:
-            config.text.llm_correction.provider = selected_llm_provider
-        config.text.llm_correction.base_url = _prompt_text(
-            "text.llm_correction.base_url",
-            config.text.llm_correction.base_url,
-        )
-        config.text.llm_correction.model = _prompt_text(
-            "text.llm_correction.model",
-            config.text.llm_correction.model,
-        )
-        config.text.llm_correction.timeout_seconds = _prompt_float(
-            "text.llm_correction.timeout_seconds",
-            float(config.text.llm_correction.timeout_seconds),
-            minimum=0.5,
-            maximum=5.0,
-        )
-        config.text.llm_correction.max_input_chars = _prompt_int(
-            "text.llm_correction.max_input_chars",
-            int(config.text.llm_correction.max_input_chars),
-            minimum=50,
-            maximum=5000,
-        )
-        config.text.llm_correction.api_key = _prompt_optional_secret(
-            "text.llm_correction.api_key",
-            _normalize_optional_secret(config.text.llm_correction.api_key),
-        )
-        config.text.llm_correction.enabled_tools = _prompt_bool(
-            "text.llm_correction.enabled_tools",
-            bool(config.text.llm_correction.enabled_tools),
-        )
+        selected_section = section_name or _prompt_config_section()
+        if section_name is None:
+            print("")
+        editor = _resolve_config_section_editor(selected_section)
+        if editor is None:
+            print(f"Unknown config section: {selected_section}", file=sys.stderr)
+            return 2
+        editor(config)
     except (EOFError, KeyboardInterrupt):
         print("\nCancelled.")
         return 130
@@ -1342,6 +1505,25 @@ def cmd_init(args: argparse.Namespace) -> int:
     write_config(config_path, config)
     print(f"Updated config: {config_path}")
     return 0
+
+
+def cmd_config(args: argparse.Namespace) -> int:
+    if not _is_interactive_session():
+        print("`pflow config` requires an interactive terminal.", file=sys.stderr)
+        return 2
+
+    config_path = _resolve_config_path(getattr(args, "config", None))
+    section_name = getattr(args, "config_target", None)
+    return _run_config_editor(config_path=config_path, section_name=section_name)
+
+
+def cmd_init(args: argparse.Namespace) -> int:
+    if not _is_interactive_session():
+        print("`pflow init` requires an interactive terminal.", file=sys.stderr)
+        return 2
+
+    config_path = _resolve_config_path(args.config)
+    return _run_config_editor(config_path=config_path, section_name="all")
 
 
 def _has_moonshine_backend() -> bool:

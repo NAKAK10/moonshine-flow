@@ -71,12 +71,17 @@ def create_stt_backend(
         language = str(getattr(config, "language", "en")).strip().lower() or "en"
         audio_cfg = getattr(config, "audio", None)
         stt_cfg = getattr(config, "stt", None)
+        stt_vllm_cfg = getattr(stt_cfg, "vllm", None)
         trailing_silence_seconds = _effective_trailing_silence_seconds_for_realtime(audio_cfg)
         settings = VLLMRealtimeBackendSettings(
             model_id=model_id,
             language=language,
             trailing_silence_seconds=trailing_silence_seconds,
             idle_shutdown_seconds=float(getattr(stt_cfg, "idle_shutdown_seconds", 30.0)),
+            startup_preset=str(getattr(stt_vllm_cfg, "startup_preset", "off")),
+            max_model_len=_vllm_max_model_len_for_recording_seconds(
+                int(getattr(audio_cfg, "max_record_seconds", 30))
+            ),
         )
         return VLLMRealtimeSTTBackend(settings, post_processor=processor)
 
@@ -147,3 +152,12 @@ def _effective_trailing_silence_seconds_for_realtime(audio_cfg: object | None) -
     if abs(configured - 1.0) < 1e-9:
         return 0.0
     return configured
+
+
+def _vllm_max_model_len_for_recording_seconds(max_record_seconds: int) -> int:
+    # Approximate speech tokenization budget at ~3000 tokens per minute.
+    if max_record_seconds <= 30:
+        return 2048
+    if max_record_seconds <= 60:
+        return 4096
+    return 8192

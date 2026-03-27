@@ -14,7 +14,7 @@ import numpy as np
 from ptarmigan_flow.ports.runtime import BackendWarmState, format_backend_warm_state
 from ptarmigan_flow.stt.base import SpeechToTextBackend
 from ptarmigan_flow.stt.realtime_capability import supports_realtime_input_model
-from ptarmigan_flow.stt.server import VLLMServerManager
+from ptarmigan_flow.stt.server import VLLMServerConfig, VLLMServerManager
 from ptarmigan_flow.text_processing.interfaces import NoopTextPostProcessor, TextPostProcessor
 from ptarmigan_flow.text_processing.normalizer import normalize_transcript_text
 
@@ -29,6 +29,8 @@ class VLLMRealtimeBackendSettings:
     language: str
     trailing_silence_seconds: float
     idle_shutdown_seconds: float = 30.0
+    startup_preset: str = "off"
+    max_model_len: int = 2048
 
 
 class VLLMRealtimeSTTBackend(SpeechToTextBackend):
@@ -42,7 +44,12 @@ class VLLMRealtimeSTTBackend(SpeechToTextBackend):
         post_processor: TextPostProcessor | None = None,
     ) -> None:
         self._settings = settings
-        self._server_manager = server_manager or VLLMServerManager()
+        self._server_manager = server_manager or VLLMServerManager(
+            VLLMServerConfig(
+                startup_preset=settings.startup_preset,
+                max_model_len=settings.max_model_len,
+            )
+        )
         self._post_processor = post_processor or NoopTextPostProcessor()
         self._ready = False
         self._last_activity_at_monotonic: float | None = None

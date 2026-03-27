@@ -13,6 +13,13 @@ model = "granite:ibm-granite/granite-4.0-1b-speech"
 # 0 disables idle shutdown.
 idle_shutdown_seconds = 30.0
 
+[stt.vllm]
+# Stored even when stt.model is not vllm; applied only for vllm backends.
+# off: current startup behavior
+# balanced: faster cold start with a small steady-state tradeoff
+# fastest: shortest cold start, strongest steady-state tradeoff
+startup_preset = "off"
+
 [hotkey]
 key = "right_cmd"
 
@@ -21,6 +28,8 @@ sample_rate = 16000
 channels = 1
 dtype = "float32"
 max_record_seconds = 30
+# For vLLM backends, max_record_seconds also tunes --max-model-len automatically:
+#   <=30s -> 2048, <=60s -> 4096, >60s -> 8192
 # Keep recording this many seconds after key release to avoid clipping the utterance tail.
 # Value is clamped to [0.0, 1.0].
 release_tail_seconds = 0.25

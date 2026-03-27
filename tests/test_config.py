@@ -2,7 +2,13 @@ from pathlib import Path
 
 import pytest
 
-from ptarmigan_flow.config import AppConfig, load_config, write_config, write_example_config
+from ptarmigan_flow.config import (
+    AppConfig,
+    VLLMStartupPreset,
+    load_config,
+    write_config,
+    write_example_config,
+)
 from ptarmigan_flow.stt.model_families import GRANITE_HF_MODEL_ID
 
 
@@ -16,6 +22,7 @@ def test_write_example_and_load_config(tmp_path: Path) -> None:
     assert loaded.language == "en"
     assert loaded.stt.model == f"granite:{GRANITE_HF_MODEL_ID}"
     assert loaded.stt.idle_shutdown_seconds == 30.0
+    assert loaded.stt.vllm.startup_preset.value == "off"
     assert loaded.audio.release_tail_seconds == 0.25
     assert loaded.audio.hotkey_release_reconcile_seconds == 0.25
     assert loaded.audio.hotkey_idle_reconcile_seconds == 1.0
@@ -46,6 +53,7 @@ def test_load_config_creates_missing_file(tmp_path: Path) -> None:
     assert loaded.audio.trailing_silence_seconds == 1.0
     assert loaded.audio.input_device_policy.value == "playback_friendly"
     assert loaded.stt.idle_shutdown_seconds == 30.0
+    assert loaded.stt.vllm.startup_preset.value == "off"
     assert loaded.stt.model == f"granite:{GRANITE_HF_MODEL_ID}"
     assert loaded.language == "en"
     assert loaded.output.mode.value == "direct_typing"
@@ -104,6 +112,58 @@ def test_write_config_round_trips_string_input_device(tmp_path: Path) -> None:
 
     loaded = load_config(cfg_path)
     assert loaded.audio.input_device == "USB Desk Mic"
+
+
+def test_write_config_round_trips_vllm_startup_preset(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "config.toml"
+    config = load_config(cfg_path)
+    config.stt.model = "vllm:mistralai/Voxtral-Mini-4B-Realtime-2602"
+    config.stt.vllm.startup_preset = VLLMStartupPreset.BALANCED
+
+    write_config(cfg_path, config)
+
+    loaded = load_config(cfg_path)
+    assert loaded.stt.model == "vllm:mistralai/Voxtral-Mini-4B-Realtime-2602"
+    assert loaded.stt.vllm.startup_preset == VLLMStartupPreset.BALANCED
+
+
+def test_load_config_rejects_invalid_vllm_startup_preset(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        """
+language = "ja"
+
+[hotkey]
+key = "right_cmd"
+
+[audio]
+sample_rate = 16000
+channels = 1
+dtype = "float32"
+max_record_seconds = 30
+
+[stt]
+model = "vllm:mistralai/Voxtral-Mini-4B-Realtime-2602"
+
+[stt.vllm]
+startup_preset = "turbo"
+
+[model]
+device = "mps"
+
+[output]
+mode = "clipboard_paste"
+paste_shortcut = "cmd+v"
+
+[runtime]
+log_level = "INFO"
+notify_on_error = true
+""".strip(),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="startup_preset"):
+        load_config(cfg_path)
 
 
 def test_load_config_clamps_audio_tail_durations_over_limit(tmp_path: Path) -> None:

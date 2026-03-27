@@ -26,6 +26,23 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument("--config", default=None, help="Path to config TOML")
     init_parser.set_defaults(func=commands.cmd_init)
 
+    config_parent = argparse.ArgumentParser(add_help=False)
+    config_parent.add_argument("--config", default=None, help="Path to config TOML")
+    config_parser = subparsers.add_parser(
+        "config",
+        parents=[config_parent],
+        help="Interactively edit config by section",
+    )
+    config_parser.set_defaults(func=commands.cmd_config, config_target=None)
+    config_subparsers = config_parser.add_subparsers(dest="config_target")
+    for section_name, section_help in commands._config_section_help_items():
+        section_parser = config_subparsers.add_parser(
+            section_name,
+            parents=[config_parent],
+            help=section_help,
+        )
+        section_parser.set_defaults(func=commands.cmd_config, config_target=section_name)
+
     list_parser = subparsers.add_parser(
         "list",
         help="List available resources",

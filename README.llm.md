@@ -18,6 +18,7 @@ https://github.com/NAKAK10/ptarmigan-flow
 
 ## Frequently Used Commands
 - `ptarmigan-flow init`: interactively edit `config.toml`.
+- `ptarmigan-flow config`: interactively edit one config section (`audio`, `stt`, `output`, etc.).
 - `ptarmigan-flow run`: run the daemon.
 - `ptarmigan-flow install-launch-agent`: install launchd auto-start.
 - `ptarmigan-flow restart-launch-agent`: restart launchd service.
@@ -98,6 +99,7 @@ Key settings:
 - `text.llm_correction.enabled_tools`: tool-calling switch for supporting endpoints.
 - `stt.model`: backend/model token (`moonshine:tiny`, `moonshine:base`, `granite:<model-id>`, `voxtral:<model-id>`, `mlx:<model-id>`, `vllm:<model-id>`).
 - `stt.idle_shutdown_seconds`: idle seconds before releasing backend resources (`30.0` default, clamped to `>=0.0`, `0` disables idle shutdown).
+- `stt.vllm.startup_preset`: vLLM cold-start preset (`off` / `balanced` / `fastest`; default `off`, stored always, applied only for `vllm:` models).
 - `runtime.ui_enabled`: enable/disable runtime UI overlays (`true` by default).
 - `runtime.activity_indicator_enabled`: show right-bottom activity icon during recording/transcription.
 - `runtime.activity_indicator_margin_right`: right offset in pixels (`>=0`).
@@ -143,6 +145,8 @@ STT backend notes:
 - Granite runs as a non-realtime backend in this app: transcription starts after key release rather than streaming while recording.
 - On macOS arm64, Granite uses `mlx-audio` and resolves the canonical HF id to the local MLX variant.
 - On other platforms, Granite uses `transformers>=4.52.1` with `torch`.
+- `stt.vllm.startup_preset` is always configurable, but only affects `vllm:` models at runtime.
+- For `vllm:` models, `--max-model-len` is derived from `audio.max_record_seconds`: `<=30s -> 2048`, `<=60s -> 4096`, `>60s -> 8192`.
 
 ## Development (Minimal)
 Prerequisites:

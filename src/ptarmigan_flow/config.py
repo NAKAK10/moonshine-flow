@@ -46,6 +46,14 @@ class InputDevicePolicy(StrEnum):
     EXTERNAL_PREFERRED = "external_preferred"
 
 
+class VLLMStartupPreset(StrEnum):
+    """Supported startup presets for local vLLM servers."""
+
+    OFF = "off"
+    BALANCED = "balanced"
+    FASTEST = "fastest"
+
+
 class HotkeyConfig(BaseModel):
     """Hotkey configuration."""
 
@@ -73,11 +81,18 @@ class ModelConfig(BaseModel):
     device: str = "mps"
 
 
+class SttVLLMConfig(BaseModel):
+    """vLLM-specific STT configuration."""
+
+    startup_preset: VLLMStartupPreset = VLLMStartupPreset.OFF
+
+
 class SttConfig(BaseModel):
     """Speech-to-text backend configuration."""
 
     model: str = f"granite:{GRANITE_HF_MODEL_ID}"
     idle_shutdown_seconds: float = 30.0
+    vllm: SttVLLMConfig = Field(default_factory=SttVLLMConfig)
 
 
 class OutputConfig(BaseModel):
@@ -242,6 +257,8 @@ def _dump_toml(data: dict[str, Any]) -> str:
         else:
             llm_api_key_line = f"api_key = \"{llm_api_key}\"\n"
         audio_cfg = data["audio"]
+        stt_cfg = data["stt"]
+        stt_vllm_cfg = stt_cfg.get("vllm", {})
         runtime_cfg = data["runtime"]
         runtime_ui_enabled = str(runtime_cfg.get("ui_enabled", True)).lower()
         runtime_indicator_enabled = str(
@@ -268,8 +285,10 @@ def _dump_toml(data: dict[str, Any]) -> str:
             f"input_device_policy = \"{audio_cfg['input_device_policy']}\"\n"
             "\n"
             "[stt]\n"
-            f"model = \"{data['stt']['model']}\"\n"
-            f"idle_shutdown_seconds = {data['stt'].get('idle_shutdown_seconds', 30.0)}\n\n"
+            f"model = \"{stt_cfg['model']}\"\n"
+            f"idle_shutdown_seconds = {stt_cfg.get('idle_shutdown_seconds', 30.0)}\n\n"
+            "[stt.vllm]\n"
+            f"startup_preset = \"{stt_vllm_cfg.get('startup_preset', 'off')}\"\n\n"
             "[model]\n"
             f"device = \"{data['model']['device']}\"\n\n"
             "[output]\n"
