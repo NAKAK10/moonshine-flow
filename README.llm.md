@@ -117,8 +117,9 @@ Correction dictionary:
 ## Installation and Runtime Notes
 - Recommended install: `brew install ptarmigan-flow`
 - Optional helper (legacy migration + retry): `./scripts/install_brew.sh`
-- Update: `brew upgrade ptarmigan-flow`
+- Update: `pflow update`
 - Uninstall: `brew uninstall ptarmigan-flow`
+- `pflow update` runs `brew upgrade ptarmigan-flow` and refreshes the installed launch agent when present.
 
 Homebrew/runtime notes:
 - If Homebrew auto-update causes issues, use `HOMEBREW_NO_AUTO_UPDATE=1` only when needed.

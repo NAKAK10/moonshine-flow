@@ -41,6 +41,7 @@ https://github.com/user-attachments/assets/f763be1b-54af-4342-886d-016837be7884
 | --- | --- |
 | `ptarmigan-flow init` | Interactively edit `config.toml` with current values as defaults. |
 | `ptarmigan-flow run` | Run the background daemon. |
+| `ptarmigan-flow update` | Update the Homebrew install and refresh the installed launch agent if present. |
 | `ptarmigan-flow install-launch-agent` | One-time setup: install the launchd agent for auto-start at login. |
 | `ptarmigan-flow restart-launch-agent` | Restart the launchd agent to apply newly granted macOS permissions. |
 
@@ -84,6 +85,7 @@ brew reinstall ptarmigan-flow
 
 Update / uninstall:
 ```bash
-brew upgrade ptarmigan-flow
+pflow update
 brew uninstall ptarmigan-flow
 ```
+`pflow update` runs `brew upgrade ptarmigan-flow` and refreshes the installed launch agent when present.

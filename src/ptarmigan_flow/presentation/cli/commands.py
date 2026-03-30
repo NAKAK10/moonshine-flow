@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import hashlib
 import json
 import logging
 import os
 import platform
+import shutil
+import subprocess
 import sys
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
@@ -20,6 +23,11 @@ from urllib.request import Request, urlopen
 
 from ptarmigan_flow.app_bundle import (
     APP_BUNDLE_IDENTIFIER,
+    ENV_BOOTSTRAP_SCRIPT,
+    ENV_LIBEXEC,
+    ENV_PYTHON,
+    ENV_UV,
+    ENV_VAR_DIR,
     app_bundle_executable_path,
     default_app_bundle_path,
     get_app_bundle_codesign_info,
@@ -79,6 +87,14 @@ LOGGER = logging.getLogger(__name__)
 _ANSI_YELLOW = "\x1b[33m"
 _ANSI_GREEN = "\x1b[32m"
 _ANSI_RESET = "\x1b[0m"
+_HOMEBREW_UPDATE_FORMULA = "ptarmigan-flow"
+_HOMEBREW_RUNTIME_ENV_KEYS = (
+    ENV_BOOTSTRAP_SCRIPT,
+    ENV_LIBEXEC,
+    ENV_VAR_DIR,
+    ENV_PYTHON,
+    ENV_UV,
+)
 
 
 def _resolve_app_version() -> str:
@@ -1643,6 +1659,216 @@ def _format_command(command: list[str]) -> str:
     return " ".join(command)
 
 
+def _is_homebrew_managed_runtime() -> bool:
+    return all(str(os.environ.get(key, "")).strip() for key in _HOMEBREW_RUNTIME_ENV_KEYS)
+
+
+def _resolve_brew_path() -> str | None:
+    return shutil.which("brew")
+
+
+def _resolve_update_helper_command() -> str | None:
+    for candidate in ("pflow", "ptarmigan-flow"):
+        resolved = shutil.which(candidate)
+        if resolved:
+            return resolved
+    return None
+
+
+def _derive_launch_agent_config_path(
+    launchd_payload: dict[str, object] | None,
+) -> Path | None:
+    if not isinstance(launchd_payload, dict):
+        return None
+
+    program_args = launchd_payload.get("ProgramArguments")
+    if not isinstance(program_args, list):
+        return None
+
+    parts = [str(part) for part in program_args]
+    try:
+        run_index = parts.index("run")
+    except ValueError:
+        return None
+
+    run_args = parts[run_index + 1 :]
+    for idx, token in enumerate(run_args):
+        if token == "--config" and idx + 1 < len(run_args):
+            value = str(run_args[idx + 1]).strip()
+            if value:
+                return Path(value).expanduser()
+        if token.startswith("--config="):
+            value = token.split("=", 1)[1].strip()
+            if value:
+                return Path(value).expanduser()
+    return None
+
+
+def _file_digest(path: Path) -> str | None:
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def _app_bundle_state(bundle_path: Path) -> tuple[str | None, str | None, str | None]:
+    executable_path = app_bundle_executable_path(bundle_path)
+    info_plist_path = bundle_path / "Contents" / "Info.plist"
+    metadata_path = bundle_path / "Contents" / "Resources" / "bootstrap.json"
+    return (
+        _file_digest(executable_path),
+        _file_digest(info_plist_path),
+        _file_digest(metadata_path),
+    )
+
+
+def _install_or_update_app_bundle_for_refresh() -> tuple[Path | None, bool]:
+    bundle_path = default_app_bundle_path()
+    before = _app_bundle_state(bundle_path)
+    installed = install_app_bundle_from_env(bundle_path)
+    if installed is None:
+        return None, False
+    after = _app_bundle_state(installed)
+    return installed, before != after
+
+
+def _report_app_bundle_install(bundle_path: Path) -> None:
+    print(_green(f"Installed app bundle: {bundle_path}"))
+
+
+def _reset_app_bundle_permissions() -> None:
+    tcc_reset_ok = reset_app_bundle_tcc(APP_BUNDLE_IDENTIFIER)
+    if tcc_reset_ok:
+        print(
+            _green(
+                "TCC permissions reset for PtarmiganFlow.app. "
+                "Re-grant Accessibility and Input Monitoring in "
+                "System Settings -> Privacy & Security."
+            )
+        )
+        return
+
+    print(
+        _yellow(
+            "Warning: could not reset TCC permissions automatically. "
+            "If Accessibility or Input Monitoring appear stale, "
+            "remove and re-add PtarmiganFlow manually in System Settings.",
+            stderr=True,
+        ),
+        file=sys.stderr,
+    )
+
+
+def _refresh_launch_agent_after_update(
+    launchd_payload: dict[str, object] | None,
+) -> int:
+    helper_command = _resolve_update_helper_command()
+    if helper_command is None:
+        print(
+            _yellow(
+                "Warning: ptarmigan-flow was updated, but the installed CLI wrapper "
+                "could not be found for launch agent refresh.",
+                stderr=True,
+            ),
+            file=sys.stderr,
+        )
+        print(
+            "Run `pflow install-launch-agent --no-request-permissions "
+            "--allow-missing-permissions --no-install-app-bundle` to refresh it.",
+            file=sys.stderr,
+        )
+        return 2
+
+    refresh_command = [
+        helper_command,
+        "_refresh-launch-agent-after-update",
+    ]
+
+    try:
+        result = subprocess.run(
+            refresh_command,
+            check=False,
+            stdin=subprocess.DEVNULL,
+        )
+    except OSError as exc:
+        print(
+            _yellow(
+                "Warning: ptarmigan-flow was updated, but refreshing the installed "
+                "launch agent failed.",
+                stderr=True,
+            ),
+            file=sys.stderr,
+        )
+        print(str(exc), file=sys.stderr)
+        print(
+            f"Run `{_format_command(refresh_command)}` to refresh it manually.",
+            file=sys.stderr,
+        )
+        return 2
+
+    if result.returncode == 0:
+        return 0
+
+    print(
+        _yellow(
+            "Warning: ptarmigan-flow was updated, but refreshing the installed "
+            "launch agent failed.",
+            stderr=True,
+        ),
+        file=sys.stderr,
+    )
+    print(
+        f"Run `{_format_command(refresh_command)}` to refresh it manually.",
+        file=sys.stderr,
+    )
+    return 2
+
+
+def cmd_refresh_launch_agent_after_update(args: argparse.Namespace) -> int:
+    del args
+    if not _is_homebrew_managed_runtime():
+        print(
+            "Launch agent refresh is unavailable in this context. "
+            "Run this via Homebrew-installed `pflow`.",
+            file=sys.stderr,
+        )
+        return 2
+
+    launchd_payload = read_launch_agent_plist()
+    if launchd_payload is None:
+        print("Launch agent is not installed.")
+        return 0
+
+    config_path = _derive_launch_agent_config_path(launchd_payload) or default_config_path()
+    llm_enabled_override = _launchd_llm_enabled_override_from_payload(launchd_payload)
+
+    bundle_path, bundle_changed = _install_or_update_app_bundle_for_refresh()
+    if bundle_path is not None:
+        _report_app_bundle_install(bundle_path)
+        if bundle_changed:
+            _reset_app_bundle_permissions()
+
+    try:
+        if llm_enabled_override is None:
+            plist_path = install_launch_agent(config_path)
+        else:
+            plist_path = install_launch_agent(
+                config_path,
+                llm_enabled_override=llm_enabled_override,
+            )
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    print(_green(f"Installed launch agent: {plist_path}"))
+    launchd_override_text = _format_optional_bool(llm_enabled_override)
+    if llm_enabled_override is True:
+        print(_green(f"Launchd LLM enabled override: {launchd_override_text}"))
+    else:
+        print(f"Launchd LLM enabled override: {launchd_override_text}")
+    return 0
+
+
 def _format_launchd_permission_guidance(
     report: PermissionReport,
     *,
@@ -1856,26 +2082,8 @@ def cmd_install_launch_agent(args: argparse.Namespace) -> int:
     if getattr(args, "install_app_bundle", True):
         bundle_path = install_app_bundle_from_env()
         if bundle_path is not None:
-            print(_green(f"Installed app bundle: {bundle_path}"))
-            tcc_reset_ok = reset_app_bundle_tcc(APP_BUNDLE_IDENTIFIER)
-            if tcc_reset_ok:
-                print(
-                    _green(
-                        "TCC permissions reset for PtarmiganFlow.app. "
-                        "Re-grant Accessibility and Input Monitoring in "
-                        "System Settings -> Privacy & Security."
-                    )
-                )
-            else:
-                print(
-                    _yellow(
-                        "Warning: could not reset TCC permissions automatically. "
-                        "If Accessibility or Input Monitoring appear stale, "
-                        "remove and re-add PtarmiganFlow manually in System Settings.",
-                        stderr=True,
-                    ),
-                    file=sys.stderr,
-                )
+            _report_app_bundle_install(bundle_path)
+            _reset_app_bundle_permissions()
 
     permission_check_command = [*resolve_launch_agent_program_prefix(), "check-permissions"]
     if args.request_permissions:
@@ -2020,6 +2228,44 @@ def cmd_install_app_bundle(args: argparse.Namespace) -> int:
         return 2
     print(_green(f"Installed app bundle: {installed}"))
     return 0
+
+
+def cmd_update(args: argparse.Namespace) -> int:
+    del args
+    if not _is_homebrew_managed_runtime():
+        print(
+            "Homebrew update is unavailable in this context. "
+            "Run this via Homebrew-installed `pflow`.",
+            file=sys.stderr,
+        )
+        return 2
+
+    brew_path = _resolve_brew_path()
+    if brew_path is None:
+        print("Homebrew `brew` command is not available.", file=sys.stderr)
+        return 2
+
+    update_command = [brew_path, "upgrade", _HOMEBREW_UPDATE_FORMULA]
+    launchd_payload = read_launch_agent_plist() if launch_agent_path().exists() else None
+
+    try:
+        result = subprocess.run(update_command, check=False)
+    except OSError as exc:
+        print(f"Failed to run Homebrew update: {exc}", file=sys.stderr)
+        return 2
+
+    if result.returncode != 0:
+        return result.returncode
+
+    print(_green(f"Updated Homebrew formula: {_HOMEBREW_UPDATE_FORMULA}"))
+
+    if launchd_payload is None:
+        return 0
+
+    refresh_status = _refresh_launch_agent_after_update(launchd_payload)
+    if refresh_status == 0:
+        print(_green("Refreshed installed launch agent."))
+    return refresh_status
 
 
 def _derive_launchd_permission_check_command(

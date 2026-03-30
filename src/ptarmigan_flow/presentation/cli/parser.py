@@ -144,4 +144,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     app_bundle_parser.set_defaults(func=commands.cmd_install_app_bundle)
 
+    update_parser = subparsers.add_parser(
+        "update",
+        help="Update the Homebrew installation and refresh installed launch agent",
+    )
+    update_parser.set_defaults(func=commands.cmd_update)
+
+    refresh_launch_agent_after_update_parser = subparsers.add_parser(
+        "_refresh-launch-agent-after-update",
+        help=argparse.SUPPRESS,
+    )
+    refresh_launch_agent_after_update_parser.set_defaults(
+        func=commands.cmd_refresh_launch_agent_after_update
+    )
+
     return parser

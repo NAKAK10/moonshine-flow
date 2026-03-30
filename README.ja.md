@@ -41,6 +41,7 @@ https://github.com/user-attachments/assets/f763be1b-54af-4342-886d-016837be7884
 | --- | --- |
 | `ptarmigan-flow init` | 現在値をデフォルトとして `config.toml` を対話的に編集します。 |
 | `ptarmigan-flow run` | バックグラウンドデーモンを起動します。 |
+| `ptarmigan-flow update` | Homebrew 版を更新し、導入済みなら launchd エージェントも更新します。 |
 | `ptarmigan-flow install-launch-agent` | 初回セットアップ用: launchd エージェントをインストールします。 |
 | `ptarmigan-flow restart-launch-agent` | 新しく許可した macOS 権限を反映するために launchd エージェントを再起動します。 |
 
@@ -84,6 +85,7 @@ brew reinstall ptarmigan-flow
 
 更新・削除:
 ```bash
-brew upgrade ptarmigan-flow
+pflow update
 brew uninstall ptarmigan-flow
 ```
+`pflow update` は内部で `brew upgrade ptarmigan-flow` を実行し、導入済みの launchd エージェントも更新します。
