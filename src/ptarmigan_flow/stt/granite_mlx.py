@@ -81,10 +81,12 @@ class GraniteMLXSTTBackend(SpeechToTextBackend):
 
         wav_path = self._prepare_temp_wav(audio, sample_rate=sample_rate)
         try:
-            result = self._transcribe(
-                model=self._model,
-                audio=wav_path,
-            )
+            with tempfile.TemporaryDirectory() as _out_dir:
+                result = self._transcribe(
+                    model=self._model,
+                    audio=wav_path,
+                    output_path=os.path.join(_out_dir, "transcript"),
+                )
         finally:
             try:
                 os.unlink(wav_path)
@@ -148,10 +150,12 @@ class GraniteMLXSTTBackend(SpeechToTextBackend):
                 trailing_silence_seconds=0.0,
             )
             try:
-                self._transcribe(
-                    model=self._model,
-                    audio=wav_path,
-                )
+                with tempfile.TemporaryDirectory() as _out_dir:
+                    self._transcribe(
+                        model=self._model,
+                        audio=wav_path,
+                        output_path=os.path.join(_out_dir, "transcript"),
+                    )
             finally:
                 try:
                     os.unlink(wav_path)
