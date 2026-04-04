@@ -1901,8 +1901,33 @@ def _format_launchd_permission_guidance(
     return "\n".join(lines)
 
 
+def _remove_stale_pyc_modules(module_names: list[str]) -> None:
+    """Delete stale .pyc files for modules that no longer exist as source.
+
+    Scans the installed ptarmigan_flow package directory (works for both
+    development editable installs and Homebrew installs).
+    """
+    import ptarmigan_flow as _pkg
+
+    pkg_dir = Path(_pkg.__file__).parent
+    removed = 0
+    for cache_dir in pkg_dir.rglob("__pycache__"):
+        for name in module_names:
+            for pyc in cache_dir.glob(f"{name}*.pyc"):
+                try:
+                    pyc.unlink()
+                    LOGGER.debug("Removed stale pyc: %s", pyc)
+                    removed += 1
+                except OSError:
+                    pass
+    if removed:
+        LOGGER.info("Removed %d stale pyc file(s) from package cache", removed)
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     from ptarmigan_flow.daemon import PtarmiganFlowDaemon
+
+    _remove_stale_pyc_modules(["terminal_handoff"])
 
     config_path = _resolve_config_path(args.config)
     config = load_config(config_path)
