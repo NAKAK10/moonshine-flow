@@ -37,3 +37,13 @@ def test_formula_has_python_health_probe_and_fallback() -> None:
     assert "def python_is_healthy?(python)" in content
     assert "/opt/homebrew/opt/python@3.11/bin/python3.11" in content
     assert "brew reinstall python@3.11" in content
+
+
+def test_formula_prefers_arm64_opt_homebrew_toolchain_when_primary_is_x86() -> None:
+    formula_path = Path(__file__).resolve().parents[1] / "Formula" / "ptarmigan-flow.rb"
+    content = formula_path.read_text(encoding="utf-8")
+
+    assert "def prefer_fallback_toolchain?(primary_python, fallback_python, fallback_uv)" in content
+    assert 'Detected x86_64 Homebrew python@3.11' in content
+    assert 'python_arch(primary_python) == "x86_64"' in content
+    assert 'python_arch(fallback_python) == "arm64"' in content

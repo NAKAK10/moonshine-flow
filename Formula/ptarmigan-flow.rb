@@ -46,10 +46,17 @@ class PtarmiganFlow < Formula
   def resolve_python_and_uv!
     primary_python = Formula["python@3.11"].opt_bin/"python3.11"
     primary_uv = Formula["uv"].opt_bin/"uv"
-    return [primary_python, primary_uv] if python_is_healthy?(primary_python)
-
     fallback_python = Pathname.new("/opt/homebrew/opt/python@3.11/bin/python3.11")
     fallback_uv = Pathname.new("/opt/homebrew/opt/uv/bin/uv")
+    if prefer_fallback_toolchain?(primary_python, fallback_python, fallback_uv)
+      opoo <<~EOS
+        Detected x86_64 Homebrew python@3.11 at #{primary_python}; using arm64 fallback #{fallback_python}.
+      EOS
+      return [fallback_python, fallback_uv]
+    end
+
+    return [primary_python, primary_uv] if python_is_healthy?(primary_python)
+
     if fallback_python.exist? && fallback_uv.exist? && python_is_healthy?(fallback_python)
       opoo <<~EOS
         Detected broken python@3.11 at #{primary_python}; using fallback #{fallback_python}.
@@ -69,6 +76,15 @@ class PtarmiganFlow < Formula
     EOS
   end
 
+  def prefer_fallback_toolchain?(primary_python, fallback_python, fallback_uv)
+    return false unless primary_python.exist?
+    return false unless fallback_python.exist? && fallback_uv.exist?
+    return false unless python_is_healthy?(primary_python)
+    return false unless python_is_healthy?(fallback_python)
+
+    python_arch(primary_python) == "x86_64" && python_arch(fallback_python) == "arm64"
+  end
+
   def python_is_healthy?(python)
     return false unless python.exist?
 
@@ -80,6 +96,18 @@ class PtarmiganFlow < Formula
     !probe.empty?
   rescue ErrorDuringExecution, Errno::ENOENT, RuntimeError
     false
+  end
+
+  def python_arch(python)
+    return "" unless python.exist?
+
+    Utils.safe_popen_read(
+      python.to_s,
+      "-c",
+      "import platform; print(platform.machine())",
+    ).strip
+  rescue ErrorDuringExecution, Errno::ENOENT, RuntimeError
+    ""
   end
 
   test do
