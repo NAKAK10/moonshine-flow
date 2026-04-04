@@ -87,3 +87,56 @@ def test_inject_unsupported_mode_raises() -> None:
     injector = OutputInjector(mode="unknown", paste_shortcut="cmd+v")
     with pytest.raises(ValueError, match="Unsupported output mode"):
         injector.inject("hello")
+
+
+def test_inject_clipboard_paste_does_not_stage_terminal_handoff_files(tmp_path, monkeypatch) -> None:
+    calls: dict[str, object] = {"copy": None, "command": None}
+
+    def _fake_copy(text: str) -> None:
+        calls["copy"] = text
+
+    def _fake_run(command, check: bool):
+        calls["command"] = list(command)
+        assert check is True
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setenv("PTARMIGAN_FLOW_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(pyperclip, "copy", _fake_copy)
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    injector = OutputInjector(mode="clipboard_paste", paste_shortcut="cmd+v")
+    assert injector.inject("hello") is True
+
+    assert calls["copy"] == "hello"
+    assert calls["command"] == [
+        "osascript",
+        "-e",
+        'tell application "System Events" to keystroke "v" using {command down}',
+    ]
+    assert not (tmp_path / "last-transcript.txt").exists()
+    assert not (tmp_path / "last-transcript.pending.json").exists()
+
+
+def test_inject_direct_typing_does_not_stage_terminal_handoff_files(tmp_path, monkeypatch) -> None:
+    calls: dict[str, object] = {"copy": None, "command": None}
+
+    def _fake_copy(text: str) -> None:
+        calls["copy"] = text
+
+    def _fake_run(command, check: bool):
+        calls["command"] = list(command)
+        assert check is True
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setenv("PTARMIGAN_FLOW_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(pyperclip, "copy", _fake_copy)
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    monkeypatch.setattr(OutputInjector, "_send_text_via_quartz", staticmethod(lambda _text: True))
+
+    injector = OutputInjector(mode="direct_typing", paste_shortcut="cmd+v")
+    assert injector.inject("hello") is True
+
+    assert calls["copy"] is None
+    assert calls["command"] is None
+    assert not (tmp_path / "last-transcript.txt").exists()
+    assert not (tmp_path / "last-transcript.pending.json").exists()
