@@ -72,7 +72,7 @@ def test_cmd_config_stt_prompts_vllm_preset_when_needed(tmp_path, monkeypatch) -
     monkeypatch.setattr(commands, "_is_interactive_session", lambda: True)
     _install_input_sequence(
         monkeypatch,
-        ["5", "vllm:mistralai/Voxtral-Mini-4B-Realtime-2602", "45", "2"],
+        ["6", "vllm:mistralai/Voxtral-Mini-4B-Realtime-2602", "45", "2"],
     )
 
     result = commands.cmd_config(argparse.Namespace(config=str(cfg_path), config_target="stt"))

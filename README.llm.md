@@ -143,6 +143,8 @@ Architecture compatibility (Apple Silicon / Intel):
 
 STT backend notes:
 - `granite:ibm-granite/granite-4.0-1b-speech` is available as a preset in `pflow list model` / `pflow init`.
+- `mlx:openai/whisper-large-v3-turbo` is available as a preset in `pflow list model` / `pflow init`.
+- On macOS arm64, the Whisper preset resolves to the MLX-compatible repo `mlx-community/whisper-large-v3-turbo` at runtime.
 - Granite runs as a non-realtime backend in this app: transcription starts after key release rather than streaming while recording.
 - On macOS arm64, Granite uses `mlx-audio` and resolves the canonical HF id to the local MLX variant.
 - On other platforms, Granite uses `transformers>=4.52.1` with `torch`.

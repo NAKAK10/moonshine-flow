@@ -7,4 +7,5 @@ def test_supports_realtime_input_model_for_known_ids() -> None:
 
 
 def test_supports_realtime_input_model_for_unknown_id() -> None:
+    assert supports_realtime_input_model("openai/whisper-large-v3-turbo") is False
     assert supports_realtime_input_model("mlx-community/whisper-large-v3-turbo") is False

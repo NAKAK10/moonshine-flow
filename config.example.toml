@@ -6,6 +6,7 @@ language = "en"
 #   moonshine:base
 #   moonshine:tiny
 #   granite:ibm-granite/granite-4.0-1b-speech
+#   mlx:openai/whisper-large-v3-turbo
 #   voxtral:mistralai/Voxtral-Mini-4B-Realtime-2602
 #   vllm:mistralai/Voxtral-Mini-4B-Realtime-2602
 model = "granite:ibm-granite/granite-4.0-1b-speech"

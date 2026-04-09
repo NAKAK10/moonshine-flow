@@ -21,6 +21,8 @@ from ptarmigan_flow.text_processing.normalizer import normalize_transcript_text
 LOGGER = logging.getLogger(__name__)
 _TARGET_SAMPLE_RATE = 16000
 _CHUNK_DURATION_SECONDS = 0.2
+_WEBSOCKET_RECV_TIMEOUT_SECONDS = 1.0
+_WEBSOCKET_STALL_TIMEOUT_SECONDS = 5.0
 
 
 @dataclass(slots=True)
@@ -161,14 +163,25 @@ class VLLMRealtimeSTTBackend(SpeechToTextBackend):
                     )
                 )
             websocket.send(json.dumps({"type": "input_audio_buffer.commit", "final": True}))
+            last_event_at = time.monotonic()
             while True:
-                raw = websocket.recv()
+                try:
+                    raw = websocket.recv(timeout=_WEBSOCKET_RECV_TIMEOUT_SECONDS)
+                except TimeoutError:
+                    stalled_for = time.monotonic() - last_event_at
+                    if stalled_for >= _WEBSOCKET_STALL_TIMEOUT_SECONDS:
+                        raise RuntimeError(
+                            "Realtime transcription stalled while waiting for server events "
+                            f"for {stalled_for:.1f}s"
+                        ) from None
+                    continue
                 try:
                     event = json.loads(raw)
                 except json.JSONDecodeError:
                     LOGGER.debug("Ignoring non-JSON realtime payload: %r", raw)
                     continue
                 if isinstance(event, dict):
+                    last_event_at = time.monotonic()
                     yield event
                     if self._is_done_event(event):
                         break

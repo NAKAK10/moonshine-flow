@@ -79,7 +79,11 @@ from ptarmigan_flow.permissions import (
     reset_app_bundle_tcc,
 )
 from ptarmigan_flow.stt.factory import create_stt_backend, parse_stt_model
-from ptarmigan_flow.stt.model_families import GRANITE_HF_MODEL_ID, resolve_runtime_model_id
+from ptarmigan_flow.stt.model_families import (
+    GRANITE_HF_MODEL_ID,
+    WHISPER_HF_MODEL_ID,
+    resolve_runtime_model_id,
+)
 from ptarmigan_flow.text_processing.interfaces import TextPostProcessor
 from ptarmigan_flow.text_processing.llm import LLMPostProcessor
 
@@ -801,11 +805,35 @@ def _stt_model_downloaded_display(model_token: str) -> str:
     return "unknown"
 
 
+def _stt_model_requires_startup_download(model_token: str) -> bool:
+    return _stt_model_downloaded_display(model_token) == "no"
+
+
+def _log_stt_startup_download_if_needed(model_token: str) -> None:
+    if not _stt_model_requires_startup_download(model_token):
+        return
+    try:
+        prefix, _model_id = parse_stt_model(model_token)
+    except ValueError:
+        return
+    backend_label = {
+        "granite": "Granite",
+        "mlx": "MLX",
+        "vllm": "vLLM",
+        "voxtral": "Voxtral",
+    }.get(prefix, prefix.upper())
+    LOGGER.info(
+        "Selected %s model is not downloaded yet; startup preflight will download it now",
+        backend_label,
+    )
+
+
 def _stt_model_presets() -> list[str]:
     return [
         "moonshine:tiny",
         "moonshine:base",
         f"granite:{GRANITE_HF_MODEL_ID}",
+        f"mlx:{WHISPER_HF_MODEL_ID}",
         "voxtral:mistralai/Voxtral-Mini-4B-Realtime-2602",
     ]
 
@@ -1610,7 +1638,7 @@ def _vllm_backend_guidance(missing: list[str]) -> str:
             f"vLLM backend dependencies are missing ({missing_text}). "
             "Local vLLM is not currently available on macOS arm64 in this environment. "
             f"Use stt.model=granite:{GRANITE_HF_MODEL_ID}, "
-            "stt.model=mlx:mlx-community/whisper-large-v3-turbo "
+            f"stt.model=mlx:{WHISPER_HF_MODEL_ID} "
             "(for example: `pflow list model`), "
             "or use stt.model=moonshine:base, or run vLLM on a Linux host."
         )
@@ -2044,6 +2072,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         LOGGER.info("LLM correction is enabled; STT streaming output is disabled for this run")
     elif not output_supports_streaming:
         LOGGER.info("Output mode disables STT streaming for this run (%s)", output_mode)
+    _log_stt_startup_download_if_needed(_stt_model_from_config(config))
     daemon = PtarmiganFlowDaemon(
         config,
         post_processor=post_processor,

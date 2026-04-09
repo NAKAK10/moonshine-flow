@@ -4,6 +4,7 @@ import pytest
 
 import ptarmigan_flow.stt.factory as factory_module
 from ptarmigan_flow.stt.factory import create_stt_backend, parse_stt_model
+from ptarmigan_flow.stt.model_families import WHISPER_HF_MODEL_ID, WHISPER_MLX_MODEL_ID
 
 
 def _config(
@@ -142,15 +143,24 @@ def test_create_stt_backend_keeps_explicit_realtime_trailing_silence(monkeypatch
 def test_create_stt_backend_builds_mlx_backend_on_macos_arm64(monkeypatch) -> None:
     monkeypatch.setattr(factory_module.platform, "system", lambda: "Darwin")
     monkeypatch.setattr(factory_module.platform, "machine", lambda: "arm64")
-    backend = create_stt_backend(_config("mlx:mlx-community/whisper-large-v3-turbo"))
+    backend = create_stt_backend(_config(f"mlx:{WHISPER_HF_MODEL_ID}"))
     assert backend.__class__.__name__ == "MLXWhisperSTTBackend"
+    assert WHISPER_MLX_MODEL_ID in backend.backend_summary()
 
 
 def test_create_stt_backend_rejects_mlx_backend_on_unsupported_platform(monkeypatch) -> None:
     monkeypatch.setattr(factory_module.platform, "system", lambda: "Linux")
     monkeypatch.setattr(factory_module.platform, "machine", lambda: "x86_64")
     with pytest.raises(ValueError, match="supported only on macOS arm64"):
-        create_stt_backend(_config("mlx:mlx-community/whisper-large-v3-turbo"))
+        create_stt_backend(_config(f"mlx:{WHISPER_HF_MODEL_ID}"))
+
+
+def test_create_stt_backend_accepts_legacy_mlx_whisper_model_id(monkeypatch) -> None:
+    monkeypatch.setattr(factory_module.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(factory_module.platform, "machine", lambda: "arm64")
+    backend = create_stt_backend(_config("mlx:mlx-community/whisper-large-v3-turbo"))
+    assert backend.__class__.__name__ == "MLXWhisperSTTBackend"
+    assert WHISPER_MLX_MODEL_ID in backend.backend_summary()
 
 
 def test_create_stt_backend_rejects_unknown_backend_prefix() -> None:

@@ -13,6 +13,7 @@ import numpy as np
 
 from ptarmigan_flow.ports.runtime import BackendWarmState, format_backend_warm_state
 from ptarmigan_flow.stt.base import SpeechToTextBackend
+from ptarmigan_flow.stt.model_families import resolve_whisper_mlx_model_id
 from ptarmigan_flow.text_processing.interfaces import NoopTextPostProcessor, TextPostProcessor
 from ptarmigan_flow.text_processing.normalizer import normalize_transcript_text
 
@@ -38,6 +39,7 @@ class MLXWhisperSTTBackend(SpeechToTextBackend):
         self._settings = settings
         self._post_processor = post_processor or NoopTextPostProcessor()
         self._ready = False
+        self._resolved_model_id = resolve_whisper_mlx_model_id(settings.model_id)
         self._last_activity_at_monotonic: float | None = None
 
     @staticmethod
@@ -51,8 +53,12 @@ class MLXWhisperSTTBackend(SpeechToTextBackend):
         return mlx_whisper
 
     def preflight_model(self) -> str:
-        self._ensure_dependency()
+        if self._ready:
+            return "mlx-whisper"
+        probe = np.zeros(3200, dtype=np.float32)
+        self._invoke_transcribe(probe, sample_rate=_TARGET_SAMPLE_RATE)
         self._ready = True
+        self._last_activity_at_monotonic = time.monotonic()
         return "mlx-whisper"
 
     def _ensure_ready(self) -> None:
@@ -64,27 +70,7 @@ class MLXWhisperSTTBackend(SpeechToTextBackend):
         if audio.size == 0:
             return ""
         self._ensure_ready()
-        mlx_whisper = self._ensure_dependency()
-        wav_path = self._prepare_temp_wav(audio, sample_rate=sample_rate)
-        try:
-            result = mlx_whisper.transcribe(
-                wav_path,
-                path_or_hf_repo=self._settings.model_id,
-                language=self._settings.language,
-            )
-        finally:
-            try:
-                os.unlink(wav_path)
-            except OSError:
-                pass
-
-        text = ""
-        if isinstance(result, dict):
-            value = result.get("text")
-            if isinstance(value, str):
-                text = value
-        elif isinstance(result, str):
-            text = result
+        text = self._extract_text(self._invoke_transcribe(audio, sample_rate=sample_rate))
 
         self._last_activity_at_monotonic = time.monotonic()
         normalized = normalize_transcript_text(text)
@@ -121,6 +107,32 @@ class MLXWhisperSTTBackend(SpeechToTextBackend):
             "🚀 Backend ready (no external server): "
             f"{self.backend_summary()} {format_backend_warm_state(self.warm_state())}"
         )
+
+    def _invoke_transcribe(self, audio: np.ndarray, *, sample_rate: int) -> object:
+        mlx_whisper = self._ensure_dependency()
+        wav_path = self._prepare_temp_wav(audio, sample_rate=sample_rate)
+        try:
+            return mlx_whisper.transcribe(
+                wav_path,
+                path_or_hf_repo=self._resolved_model_id,
+                language=self._settings.language,
+            )
+        finally:
+            try:
+                os.unlink(wav_path)
+            except OSError:
+                pass
+
+    @staticmethod
+    def _extract_text(result: object) -> str:
+        if isinstance(result, dict):
+            value = result.get("text")
+            if isinstance(value, str):
+                return value
+            return ""
+        if isinstance(result, str):
+            return result
+        return ""
 
     def _prepare_temp_wav(self, audio: np.ndarray, *, sample_rate: int) -> str:
         mono = self._to_mono_float32(audio)
@@ -165,7 +177,7 @@ class MLXWhisperSTTBackend(SpeechToTextBackend):
     def backend_summary(self) -> str:
         return (
             "backend=mlx-whisper "
-            f"model={self._settings.model_id} "
+            f"model={self._resolved_model_id} "
             f"language={self._settings.language}"
         )
 

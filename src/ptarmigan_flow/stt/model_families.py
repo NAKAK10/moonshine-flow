@@ -6,6 +6,8 @@ VOXTRAL_HF_MODEL_ID = "mistralai/Voxtral-Mini-4B-Realtime-2602"
 VOXTRAL_MLX_MODEL_ID = "mlx-community/Voxtral-Mini-4B-Realtime-6bit"
 GRANITE_HF_MODEL_ID = "ibm-granite/granite-4.0-1b-speech"
 GRANITE_MLX_MODEL_ID = "mlx-community/granite-4.0-1b-speech-8bit"
+WHISPER_HF_MODEL_ID = "openai/whisper-large-v3-turbo"
+WHISPER_MLX_MODEL_ID = "mlx-community/whisper-large-v3-turbo"
 
 
 def resolve_voxtral_mlx_model_id(model_id: str) -> str:
@@ -22,6 +24,13 @@ def resolve_granite_mlx_model_id(model_id: str) -> str:
     return normalized
 
 
+def resolve_whisper_mlx_model_id(model_id: str) -> str:
+    normalized = model_id.strip()
+    if normalized.lower() == WHISPER_HF_MODEL_ID.lower():
+        return WHISPER_MLX_MODEL_ID
+    return normalized
+
+
 def resolve_runtime_model_id(
     *,
     prefix: str,
@@ -34,4 +43,6 @@ def resolve_runtime_model_id(
         return resolve_voxtral_mlx_model_id(normalized_model_id)
     if normalized_prefix == "granite" and macos_arm64:
         return resolve_granite_mlx_model_id(normalized_model_id)
+    if normalized_prefix == "mlx" and macos_arm64:
+        return resolve_whisper_mlx_model_id(normalized_model_id)
     return normalized_model_id

@@ -830,7 +830,7 @@ def test_release_idle_transcriber_resources_skips_when_busy(monkeypatch) -> None
     assert daemon.transcriber.idle_release_calls == 0
 
 
-def test_stop_recording_falls_back_when_live_lock_is_busy(monkeypatch) -> None:
+def test_stop_recording_defers_final_transcription_when_live_lock_is_busy(monkeypatch) -> None:
     config = AppConfig()
     config.audio.release_tail_seconds = 0.0
     daemon = _build_daemon(monkeypatch, config=config)
@@ -847,9 +847,43 @@ def test_stop_recording_falls_back_when_live_lock_is_busy(monkeypatch) -> None:
         if daemon._live_input_lock.locked():
             daemon._live_input_lock.release()
 
-    item = daemon._audio_queue.get_nowait()
     assert daemon.recorder.stop_calls == 1
+    assert daemon._audio_queue.qsize() == 0
+    assert daemon.activity_indicator.show_processing_calls == 1
+    assert daemon._pending_final_audio is not None
+    assert daemon._pending_final_audio.emitted_prefix == "latest-prefix"
+
+
+def test_flush_pending_final_audio_queues_after_live_lock_releases(monkeypatch) -> None:
+    config = AppConfig()
+    config.audio.release_tail_seconds = 0.0
+    daemon = _build_daemon(monkeypatch, config=config)
+    daemon._supports_realtime_input = True
+    daemon.recorder.is_recording = True
+    with daemon._state_lock:
+        daemon._live_emitted_text = "latest-prefix"
+
+    monkeypatch.setattr(daemon_module, "_LIVE_INPUT_STOP_LOCK_TIMEOUT_SECONDS", 0.01)
+    daemon._live_input_lock.acquire()
+    daemon._stop_recording_and_queue_audio(reason="hotkey-release-reconciled")
+    daemon._live_input_lock.release()
+
+    daemon._flush_pending_final_audio_if_ready()
+
+    item = daemon._audio_queue.get_nowait()
     assert item.emitted_prefix == "latest-prefix"
+    assert daemon._pending_final_audio is None
+    assert daemon._pending_final_audio_reason is None
+
+
+def test_hotkey_down_ignores_press_while_final_transcription_is_pending(monkeypatch) -> None:
+    daemon = _build_daemon(monkeypatch)
+    with daemon._state_lock:
+        daemon._pending_final_audio = SimpleNamespace(audio=np.zeros((2, 1)), emitted_prefix="")
+
+    daemon._on_hotkey_down()
+
+    assert daemon.recorder.start_calls == 0
 
 
 def test_stop_recording_logs_info_when_keydown_warmup_holds_lock(monkeypatch, caplog) -> None:

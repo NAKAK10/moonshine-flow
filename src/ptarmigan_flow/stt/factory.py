@@ -11,6 +11,7 @@ from ptarmigan_flow.stt.granite_transformers import (
     GraniteTransformersSTTBackend,
 )
 from ptarmigan_flow.stt.mlx_whisper import MLXWhisperBackendSettings, MLXWhisperSTTBackend
+from ptarmigan_flow.stt.model_families import WHISPER_HF_MODEL_ID
 from ptarmigan_flow.stt.moonshine import MoonshineSTTBackend
 from ptarmigan_flow.stt.vllm_realtime import VLLMRealtimeBackendSettings, VLLMRealtimeSTTBackend
 from ptarmigan_flow.stt.voxtral_mlx import VoxtralMLXSettings, VoxtralMLXSTTBackend
@@ -28,7 +29,7 @@ def parse_stt_model(model: str) -> tuple[str, str]:
     if ":" not in token:
         raise ValueError(
             "stt.model must use '<backend>:<model>' format "
-            "(example: moonshine:base, mlx:mlx-community/whisper-large-v3-turbo, "
+            f"(example: moonshine:base, mlx:{WHISPER_HF_MODEL_ID}, "
             "granite:ibm-granite/granite-4.0-1b-speech, "
             "voxtral:mistralai/Voxtral-Mini-4B-Realtime-2602, "
             "vllm:mistralai/Voxtral-Mini-4B-Realtime-2602)"
